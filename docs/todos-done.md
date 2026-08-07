@@ -255,8 +255,7 @@
 
 ## Milestone 5：权限 / Plan / Sub-agent（v0.5）✅ 2026-08-08 落地
 
-> 完成项从 todos-list.md 迁入（M5-S1~S4）。SC-4.3/4.4/4.5 单测形态 + 真实网关 /plan 实测。
-> P0 审批模式分级（--auto-edit）后置（留在 todos-list.md 的 M5-S5）。
+> 完成项从 todos-list.md 迁入（M5-S1~S5，含后置 P1 与 P0）。SC-4.2/4.3/4.4/4.5 单测形态 + 真实网关 /plan 实测。
 
 ### M5-S1 权限规则引擎 + 危险命令二次确认（SC-4.2 / SC-4.3）
 - **完成时间**：2026-08-08
@@ -281,6 +280,13 @@
 - **内容**：`~/.dscode/permissions.json`（DSCODE_HOME 覆盖）读写 + `addPermissionRule`；CLI `/allow` / `/deny` 持久化规则（重启保留，新实例仍命中）。
 - **证据**：permission.test.ts "重启规则保留"用例；commands.test.ts /allow /deny 用例。
 - **对应**：todos M5 P1 验收（重启规则保留）
+
+### M5-S5 审批模式分级（后置 P0，read-only/ask/auto-edit/full-auto）
+- **完成时间**：2026-08-08
+- **内容**：PermissionEngine 增 `mode`（ask 默认；autoApprove 兼容映射 full-auto）+ `writeTool` 上下文分派——read-only 拒写/拒危险、ask 写确认（无回调放行，print/CI 仍可编辑）+危险确认、auto-edit 编辑不弹框+危险仍确认（验收点）、full-auto 全放行；CLI `--approval <模式>` + `--auto-edit` 快捷 flag（显式 --approval 优先）+ 校验 + HELP；build-session 传 `mode: args.approval`。
+- **证据**：args.test.ts 解析 2 条；permission.test.ts 四模式 4 条（read-only 拒写、ask 无回调放行/危险拒、auto-edit 编辑放行+危险确认、full-auto 全放行）；`--auto-edit` 启动实测。
+- **关键坑**：ask 模式写工具无回调须放行（否则 print/CI 无法编辑文件），危险命令仍默认拒绝——安全与可用性的分界线。
+- **对应**：todos M5-S5 验收（`--auto-edit` 启动后文件编辑不弹框、bash 仍弹）
 
 ### 过程中修复的关键缺陷（经验沉淀）
 - **dscodeHome 双导出冲突（再现）**：permission.ts 又本地定义 dscodeHome 与 session/manager 冲突——改为从 manager 导入（M4 trust.ts 同款坑）。

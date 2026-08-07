@@ -51,12 +51,8 @@
 
 ## Milestone 5：权限 / Plan / Sub-agent（v0.5）✅ 已完成
 
-> **状态：2026-08-08 落地（SC-4.3 危险命令二次确认、SC-4.4 Plan 只读、SC-4.5 sub-agent；含 P1 规则持久化）。**
-> M5 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 5。
-> 审批模式分级（--auto-edit）后置，不阻塞 M5 关闭。
-
-### M5-S5 审批模式分级（后置 P0 打磨项）
-- [ ] [P0] [M5] 审批模式分级 — read-only/ask/auto-edit/full-auto → 验收：`--auto-edit` 启动后文件编辑不弹框、bash 仍弹
+> **状态：2026-08-08 落地（SC-4.2/4.3 权限规则与危险命令二次确认、SC-4.4 Plan 只读、SC-4.5 sub-agent；含 P1 规则持久化与后置 P0 审批模式分级）。**
+> M5 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 5。
 
 ---
 
