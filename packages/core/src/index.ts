@@ -15,5 +15,9 @@ export * from './tools/bash.js';
 export * from './tools/glob.js';
 export * from './tools/grep.js';
 export * from './tools/ls.js';
+export * from './agent/events.js';
+export * from './agent/prompt.js';
+export * from './agent/session.js';
+export * from './agent/runtime.js';
 
 export const CORE_PACKAGE_VERSION = '0.1.0';
