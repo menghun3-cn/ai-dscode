@@ -253,6 +253,42 @@
 
 ---
 
+## Milestone 5：权限 / Plan / Sub-agent（v0.5）✅ 2026-08-08 落地
+
+> 完成项从 todos-list.md 迁入（M5-S1~S4）。SC-4.3/4.4/4.5 单测形态 + 真实网关 /plan 实测。
+> P0 审批模式分级（--auto-edit）后置（留在 todos-list.md 的 M5-S5）。
+
+### M5-S1 权限规则引擎 + 危险命令二次确认（SC-4.2 / SC-4.3）
+- **完成时间**：2026-08-08
+- **内容**：`permission/permission.ts`——危险命令检测（rm -rf / sudo / git push --force / mkfs / dd 裸设备 / shutdown / curl 管道执行等 8 类模式）；PermissionEngine（allow/deny 前缀匹配、ask=二次确认回调、full-auto autoApprove 跳过、无回调默认拒绝的安全兜底）；executeTool 集成（bash 危险命令 gate，扩展工具也过权限）。
+- **证据**：`permission.test.ts` 7 条（检测命中/放行/默认拒绝/按用户决定/allow-deny 优先级/full-auto/持久化）。
+- **对应**：SC-4.2（allow/deny/ask 子集）、SC-4.3
+
+### M5-S2 Plan mode（SC-4.4）
+- **完成时间**：2026-08-08
+- **内容**：`plan/plan.ts`——PlanManager（只读模式 enter/accept + 步骤状态机 pending→done/failed + WRITE_TOOLS 写工具集）；executeTool 在 plan 激活时拒绝 write/edit；CLI `/plan` → `/plan-set` 步骤 → `/accept-plan` 落地。
+- **证据**：`plan.test.ts` 3 条；session.test.ts plan 拦截/放行用例；真实网关实测 `/plan` → `/accept-plan` 均正常。
+- **对应**：SC-4.4
+
+### M5-S3 sub-agent（SC-4.5）
+- **完成时间**：2026-08-08
+- **内容**：`tools/task.ts`——task 工具；`ToolExecutionContext.subAgent` 工厂 + session.runSubAgent（隔离 AgentSession：独立 EventBus、persist=false、共享 cwd/工具/权限，结果截断 4KB 回灌主，见 原理-plan-and-execute.md §6）。
+- **证据**：session.test.ts sub-agent 用例（主→task 调用→子会话消费一轮→摘要回传→主收敛）。
+- **对应**：SC-4.5
+
+### M5-S4 允许/拒绝列表持久化（后置 P1）
+- **完成时间**：2026-08-08
+- **内容**：`~/.dscode/permissions.json`（DSCODE_HOME 覆盖）读写 + `addPermissionRule`；CLI `/allow` / `/deny` 持久化规则（重启保留，新实例仍命中）。
+- **证据**：permission.test.ts "重启规则保留"用例；commands.test.ts /allow /deny 用例。
+- **对应**：todos M5 P1 验收（重启规则保留）
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **dscodeHome 双导出冲突（再现）**：permission.ts 又本地定义 dscodeHome 与 session/manager 冲突——改为从 manager 导入（M4 trust.ts 同款坑）。
+- **checkPermission 返回值误用**：返回 string 原因却当对象用 `.reason`——修正为 `verdict !== null` 判定 + 字符串直接拼接。
+- **scriptedClient 计数器跨 run 共享**：测试里一轮 run 会消费多轮 LLM 调用，第二次 run 无 tool_call——用例需按"每 run 消费 write+content 两轮"设计轮次。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）

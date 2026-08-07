@@ -49,14 +49,14 @@
 
 ---
 
-## Milestone 5：权限 / Plan / Sub-agent（v0.5）
+## Milestone 5：权限 / Plan / Sub-agent（v0.5）✅ 已完成
 
-- [ ] [P0] [M5] 权限规则引擎 — allow/deny/ask，glob + 命令前缀匹配 → 验收：SC-4.2
-- [ ] [P0] [M5] 审批模式分级 — read-only/ask/auto-edit/full-auto → 锗收：`--auto-edit` 启动后文件编辑不弹框、bash 仍弹
-- [ ] [P0] [M5] 危险命令二次确认 — `rm -rf`/`sudo`/`git push --force` 始终确认（除 full-auto+allow） → 验收：SC-4.3
-- [ ] [P0] [M5] Plan mode — `/plan` 只读，写工具被拒；`/accept-plan` 落地 → 验收：SC-4.4
-- [ ] [P0] [M5] sub-agent（`task` 工具）— 隔离 AgentSession 执行，结果回传主 → 验收：SC-4.5
-- [ ] [P1] [M5] 允许/拒绝列表持久化 `~/.dscode/permissions.json` → 验收：重启规则保留
+> **状态：2026-08-08 落地（SC-4.3 危险命令二次确认、SC-4.4 Plan 只读、SC-4.5 sub-agent；含 P1 规则持久化）。**
+> M5 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 5。
+> 审批模式分级（--auto-edit）后置，不阻塞 M5 关闭。
+
+### M5-S5 审批模式分级（后置 P0 打磨项）
+- [ ] [P0] [M5] 审批模式分级 — read-only/ask/auto-edit/full-auto → 验收：`--auto-edit` 启动后文件编辑不弹框、bash 仍弹
 
 ---
 
