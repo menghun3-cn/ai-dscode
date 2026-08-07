@@ -1,7 +1,7 @@
 /**
  * 模式分发器（架构文档 §4.2.9、todos M1-S5）。
  * 按 args 分发：interactive（TUI）/ print / json / rpc。
- * json/rpc 本期占位（v0.4+ 落地），先保证分支命中正确。
+ * json 占位（v1.0 落地）；rpc 已落地（todos M7）。
  */
 
 import process from 'node:process';
@@ -11,6 +11,7 @@ import type { CliArgs, CliMode } from './args.js';
 import { buildSession } from './build-session.js';
 import { runPrint } from './print.js';
 import { runInteractive } from './tui.js';
+import { runRpc } from './rpc.js';
 
 /** 判定实际模式：-p 即 print；否则取 --mode，默认 interactive */
 export function resolveMode(args: CliArgs): CliMode {
@@ -41,13 +42,9 @@ export async function firstRunPromptAndSave(): Promise<string | undefined> {
 export async function dispatch(args: CliArgs): Promise<number> {
   const mode = resolveMode(args);
 
-  // json/rpc 占位（v0.4+ 落地），先保证分支命中（日志可见 mode）
+  // json 占位（v1.0 落地），先保证分支命中（日志可见 mode）
   if (mode === 'json') {
-    console.error('[dscode] json 模式将在 v0.4 落地（当前为占位分支）');
-    return 0;
-  }
-  if (mode === 'rpc') {
-    console.error('[dscode] rpc 模式将在 v0.4 落地（当前为占位分支）');
+    console.error('[dscode] json 模式将在 v1.0 落地（当前为占位分支）');
     return 0;
   }
 
@@ -75,6 +72,9 @@ export async function dispatch(args: CliArgs): Promise<number> {
 
   if (mode === 'print') {
     return runPrint(session, args.printPrompt, args.positionals);
+  }
+  if (mode === 'rpc') {
+    return runRpc(session); // JSON-RPC over stdio（todos M7）
   }
   // interactive（TUI）
   return runInteractive(session, extManager);

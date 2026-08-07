@@ -20,9 +20,11 @@ import {
   AgentSessionRuntime,
   EventBus,
   ExtensionManager,
+  McpClient,
   PermissionEngine,
   SessionManager,
   createBuiltinRegistry,
+  registerMcpTools,
   type AgentSession,
   type ChatStreamer,
 } from '@dscode/core';
@@ -150,9 +152,31 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
     },
   });
 
+  // M7：MCP servers（DSCODE_MCP_SERVERS env，JSON { name: { command, args } }）
+  // 连接失败不阻塞启动（日志提示，见 原理-mcp.md §5 生命周期）
+  const registry = createBuiltinRegistry();
+  const mcpRaw = process.env['DSCODE_MCP_SERVERS'];
+  if (mcpRaw) {
+    try {
+      const servers = JSON.parse(mcpRaw) as Record<string, { command: string; args?: string[] }>;
+      for (const [name, cfg] of Object.entries(servers)) {
+        try {
+          const client = new McpClient(cfg.command, cfg.args ?? []);
+          await client.connect();
+          const n = await registerMcpTools(registry, client, name);
+          process.stderr.write(`[mcp] 已连接 ${name}（${n} 个工具）\n`);
+        } catch (err) {
+          process.stderr.write(`[mcp] ${name} 连接失败: ${err instanceof Error ? err.message : String(err)}\n`);
+        }
+      }
+    } catch {
+      process.stderr.write('[mcp] DSCODE_MCP_SERVERS 不是合法 JSON，已跳过\n');
+    }
+  }
+
   const session = AgentSessionRuntime.create({
     cwd: process.cwd(),
-    tools: createBuiltinRegistry(),
+    tools: registry,
     client,
     bus,
     permission,
