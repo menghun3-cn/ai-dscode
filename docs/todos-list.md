@@ -65,12 +65,8 @@
 
 ## Milestone 7：MCP 与 RPC（v0.7）✅ 已完成
 
-> **状态：2026-08-08 落地（MCP client stdio + 工具注入；rpc 模式 JSON-RPC over stdio，send→回复往返实测通过）。**
-> M7 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 7。
-> P2 json 模式后置，不阻塞 M7 关闭。
-
-### M7-S3 json 模式 event 流（后置 P2 打磨项）
-- [ ] [P2] [M8] json 模式 event 流 — 每行 `{type,data}` 标准化 → 验收：SC-6.3
+> **状态：2026-08-08 落地（MCP client stdio + 工具注入；rpc 模式 JSON-RPC over stdio；json 模式 event 流，SC-6.3 实测通过）。**
+> M7 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 7。
 
 ---
 

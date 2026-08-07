@@ -332,8 +332,7 @@
 
 ## Milestone 7：MCP 与 RPC（v0.7）✅ 2026-08-08 落地
 
-> 完成项从 todos-list.md 迁入（M7-S1~S2）。rpc send→回复往返真实网关实测通过。
-> P2 json 模式后置（留在 todos-list.md 的 M7-S3）。
+> 完成项从 todos-list.md 迁入（M7-S1~S3）。rpc send→回复往返 + json 模式 SC-6.3 真实网关实测通过。
 
 ### M7-S1 MCP client + 工具注入
 - **完成时间**：2026-08-08
@@ -346,6 +345,12 @@
 - **内容**：`rpc.ts`——`ping` / `send`（跑 Agent Loop，逐事件发 `event` 通知，回复最终文本）/ `quit`；未知方法 -32601；dispatcher 占位分支替换为 runRpc 分发。
 - **证据**：`rpc.test.ts` 3 条（ping/事件流+回复往返/未知方法）；真实网关实测 `{"id":2,"result":{"reply":"…"}}` send→回复往返成功。
 - **对应**：FR-11、todos M7 P1 验收（外部进程发 send 完成"提问→回复"往返）
+
+### M7-S3 json 模式 event 流（后置 P2，SC-6.3）
+- **完成时间**：2026-08-08
+- **内容**：`json.ts`——`runJson` 逐事件输出一行 `{"type","data"}`（message_update/tool_call/tool_result/agent_settled 全事件序列化），复用 resolvePrintPrompt，注入流便于测试，退出码反映工具失败；dispatcher 占位替换为 runJson 分发；修复 `resolveMode`（显式非默认 `--mode` 优先于 `-p` 快捷，`-p "x" --mode json` 正确进 json）。
+- **证据**：`json.test.ts` 3 条（每行可 parse 含 type/data、事件流含 agent_start/message_update/agent_settled、缺 prompt 返回 2）+ dispatcher 回归测试；真实网关实测 `-p - --mode json` 输出合法 `{type,data}` 事件行。
+- **对应**：SC-6.3（每行 JSON.parse 通过、含 type/data 字段）
 
 ### 过程中修复的关键缺陷（经验沉淀）
 - **readline async handler 不串行**：quit 抢先结束进程截断 send 回复——改为**处理链串行**（chain 逐个 then）。
