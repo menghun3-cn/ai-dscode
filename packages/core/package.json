@@ -1,0 +1,18 @@
+{
+  "name": "@dscode/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent loop, tools, session, permission engine",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@dscode/ai": "workspace:*"
+  }
+}
