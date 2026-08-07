@@ -104,6 +104,53 @@
 
 ---
 
+## Milestone 2：Session 持久化（v0.2）✅ 2026-08-07 落地
+
+> 全部完成项从 todos-list.md 迁入（含后置 P1：/name 检索、/export 完善）。单测形态覆盖 SC-2.1~2.4。
+
+### M2-S1 SessionManager + JSONL 格式（SC-2.1）
+- **完成时间**：2026-08-07
+- **内容**：`packages/core/src/session/`——`entries.ts`（SessionEntry 8 类：user/assistant/toolResult/compaction/branchSummary/modelChange/label/extension）、`manager.ts`（`~/.dscode/sessions/<cwd-hash>/<id>.jsonl`，DSCODE_HOME 可覆盖，JSONL 追加写，损坏行跳过，list/latestId/create）、`context.ts`（branchPath + buildContextEntries：激活分支 + compaction 折叠，modelChange/label 跳过）。
+- **证据**：`session/manager.test.ts` 5 条（往返/损坏行/倒序/名字/fork）；SC-2.1 断言每行可 parse。
+- **对应**：FR-5.1、SC-2.1
+
+### M2-S2 resume/continue（SC-2.2）
+- **完成时间**：2026-08-07
+- **内容**：AgentSession 增 `sessionId`/`entries`/`activeBranch`/`prepare()` resume 加载；CLI `-c` 续最近会话、`-r` 列表交互选择恢复（`resolveSessionId`）；`persist()` 增量落盘（savedCount）。
+- **证据**：`session.test.ts` resume 用例（同 sessionId 恢复历史含首轮 user 消息）。
+- **对应**：FR-5.2、SC-2.2
+
+### M2-S3 tree navigation（SC-2.3）
+- **完成时间**：2026-08-07
+- **内容**：`/tree` 查看会话树（编号/类型/预览）、`/tree <n>` 跳节点改写分支（`jumpTo`）；buildContextEntries 只沿激活分支折叠。
+- **证据**：`session.test.ts` jumpTo 用例；`context.test.ts` 分支隔离 6 条。
+- **对应**：FR-5.3、SC-2.3
+
+### M2-S4 fork/clone（SC-2.4）
+- **完成时间**：2026-08-07
+- **内容**：`/fork <n>` 从历史节点生成新会话文件（旧文件不变）、`/clone` 复制当前分支为新会话（`forkFrom`/`clone`）。
+- **证据**：`manager.test.ts` fork 语义用例（新文件内容一致、旧文件原样）。
+- **对应**：FR-5.3、SC-2.4
+
+### M2-S5 /name 命名与检索（后置 P1）
+- **完成时间**：2026-08-07
+- **内容**：`/name <名字>` 写 label entry；`SessionManager.list()` 带 `name`（最后一个 label）；`-r` 选择器与 `/resume` 显示「会话名」。
+- **证据**：`manager.test.ts` list 带名字用例；`commands.test.ts` /name 用例。
+- **对应**：FR-5.4
+
+### M2-S6 /export 导出（后置 P1）
+- **完成时间**：2026-08-07
+- **内容**：`packages/cli/src/export.ts`——markdown 渲染器（会话 ID/名字/导出时间/节点数/模型切换/时间戳）+ HTML 渲染器（样式 + 转义）；`/export` 与 `/export html`。
+- **证据**：`export.test.ts` 4 条（md 结构、html 骨架、XSS 转义）。
+- **对应**：FR-5.5
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **persist 只落最后一条**：resume 后历史缺失——改为 savedCount 增量全量追加。
+- **SessionEntry.content 需允许 null**：assistant 仅 tool_calls 时 content 为 null。
+- **listSessions 返回类型缺 name**：commands.ts 与 core SessionMeta 类型同步。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）

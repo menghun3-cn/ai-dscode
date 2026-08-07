@@ -28,14 +28,10 @@
 
 ---
 
-## Milestone 2：Session 持久化（v0.2）
+## Milestone 2：Session 持久化（v0.2）✅ 已完成
 
-- [ ] [P0] [M2] SessionManager + JSONL 格式 — entry 类型、tree 结构、自动保存 → 验收：SC-2.1
-- [ ] [P0] [M2] resume/continue — `dscode -c`/-r、`/resume`、`/new` → 验收：SC-2.2
-- [ ] [P0] [M2] tree navigation — `/tree` 跳节点改写分支、branch summary → 验收：SC-2.3
-- [ ] [P0] [M2] fork/clone — `/fork`/`/clone` 生成新 session → 验收：SC-2.4
-- [ ] [P1] [M2] `/name` 命名与检索 → 验收：`-r` 列表显示名字
-- [ ] [P1] [M2] `/export` 导出 markdown → 验收：导出文件可读
+> **状态：2026-08-07 落地（SC-2.1~2.4 单测形态通过，含后置 P1）。**
+> M2 全部完成项（含 /name 检索、/export 完善）已归档至 [todos-done.md](todos-done.md) §Milestone 2。
 
 ---
 
