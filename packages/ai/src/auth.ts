@@ -25,7 +25,12 @@ export interface AuthResolveOptions {
   env?: Record<string, string | undefined>;
 }
 
-const DEFAULT_AUTH_FILE = () => path.join(os.homedir(), '.dscode', 'auth.json');
+/** 默认 auth.json 路径：DSCODE_HOME 覆盖（验收脚本/自定义位置）> ~/.dscode/auth.json */
+function defaultAuthFile(env: Record<string, string | undefined> = process.env): string {
+  const home = env['DSCODE_HOME'];
+  if (home) return path.join(home, 'auth.json');
+  return path.join(os.homedir(), '.dscode', 'auth.json');
+}
 
 /** 解析 API key：--api-key > auth.json > env（DEEPSEEK_API_KEY / DSAPI_API_KEY） */
 export async function resolveApiKey(opts: AuthResolveOptions = {}): Promise<AuthResult | undefined> {
@@ -33,7 +38,7 @@ export async function resolveApiKey(opts: AuthResolveOptions = {}): Promise<Auth
   if (opts.cliApiKey) return { key: opts.cliApiKey, source: 'cli' };
 
   // 2. auth.json
-  const authFile = opts.authFile ?? DEFAULT_AUTH_FILE();
+  const authFile = opts.authFile ?? defaultAuthFile(opts.env);
   try {
     const raw = await fs.readFile(authFile, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, { type?: string; key?: string }>;
@@ -54,14 +59,16 @@ export async function resolveApiKey(opts: AuthResolveOptions = {}): Promise<Auth
 export interface AuthSaveOptions {
   key: string;
   provider?: string;
-  /** 测试注入：auth.json 绝对路径（默认 ~/.dscode/auth.json） */
+  /** 测试注入：auth.json 绝对路径（默认 $DSCODE_HOME/auth.json 或 ~/.dscode/auth.json） */
   authFile?: string;
+  /** 测试注入：环境变量快照（默认 process.env，用于 DSCODE_HOME） */
+  env?: Record<string, string | undefined>;
 }
 
 /** 写入 auth.json（0600）。返回写入路径。 */
 export async function saveAuthKey(opts: AuthSaveOptions): Promise<string> {
   const provider = opts.provider ?? 'deepseek';
-  const authFile = opts.authFile ?? DEFAULT_AUTH_FILE();
+  const authFile = opts.authFile ?? defaultAuthFile(opts.env);
   await fs.mkdir(path.dirname(authFile), { recursive: true });
   const existing = await readAuthFile(authFile);
   existing[provider] = { type: 'api_key', key: opts.key };
