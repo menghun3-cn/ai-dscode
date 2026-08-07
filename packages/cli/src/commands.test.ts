@@ -47,6 +47,14 @@ function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandCont
     setThinkingMode: vi.fn((mode) => {
       thinkingMode = mode;
     }),
+    extensions: {
+      reload: vi.fn(async () => '已热重载扩展：0 个加载'),
+      list: () => '扩展已加载 0 个',
+    },
+    skills: {
+      apply: vi.fn(async (name) => (name === 'lint' ? '已加载 skill: lint' : `未找到 skill: ${name}`)),
+      list: vi.fn(async () => '可用 skills:\n  lint'),
+    },
     session: makeSessionOps(),
     ...overrides,
   };
@@ -115,6 +123,23 @@ describe('handleSlash（todos M1-S5 验收）', () => {
     const r = await handleSlash('/thinking', makeCtx());
     expect(r.output).toContain('stream');
     expect(r.output).toContain('stream|fold|off');
+  });
+
+  it('/skill:<name> 加载 skill 指令注入上下文（M4-S6 验收）', async () => {
+    const ctx = makeCtx();
+    const r = await handleSlash('/skill:lint', ctx);
+    expect(ctx.skills.apply).toHaveBeenCalledWith('lint');
+    expect(r.output).toContain('已加载 skill: lint');
+  });
+
+  it('/skill: 缺名字提示用法', async () => {
+    const r = await handleSlash('/skill:', makeCtx());
+    expect(r.output).toContain('用法');
+  });
+
+  it('/skill 列出可用 skills', async () => {
+    const r = await handleSlash('/skill', makeCtx());
+    expect(r.output).toContain('lint');
   });
 
   it('/clear 清空会话', async () => {

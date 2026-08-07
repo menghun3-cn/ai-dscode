@@ -287,6 +287,19 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `已热重载扩展：${apis.length} 个加载，工具 ${toolCount} · 命令 ${cmdCount}${errText}`;
       },
     },
+    // M4 P1：Skill 系统（/skill:<name> 加载指令注入上下文）
+    skills: {
+      apply: async (name) => {
+        const ok = await session.applySkill(name);
+        return ok ? `已加载 skill: ${name}` : `未找到 skill: ${name}（/skill 查看可用列表）`;
+      },
+      list: async () => {
+        const names = await session.listSkills();
+        return names.length > 0
+          ? `可用 skills:\n${names.map((n) => `  ${n}`).join('\n')}`
+          : '暂无 skills（放 ~/.dscode/skills/*.md 或 .dscode/skills/*.md）';
+      },
+    },
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
       id: session.sessionId,

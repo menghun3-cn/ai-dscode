@@ -47,6 +47,11 @@ export interface SlashCommandContext {
     reload: () => Promise<string>;
     list: () => string;
   };
+  /** M4 P1：Skill 系统（/skill:<name> 加载指令注入上下文） */
+  skills: {
+    apply: (name: string) => Promise<string>;
+    list: () => Promise<string>;
+  };
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -61,7 +66,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'skill', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -69,6 +74,14 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
   }
   const [cmd, ...rest] = input.slice(1).trim().split(/\s+/);
   const arg = rest.join(' ').trim();
+
+  // /skill:<name>：加载 skill 指令注入上下文（渐进披露，原理-agentloop.md §7）。
+  // 需在 switch 前匹配，避免命中 default 的"未知命令"。
+  if (cmd?.startsWith('skill:')) {
+    const name = cmd.slice('skill:'.length).trim();
+    if (!name) return { handled: true, output: '用法: /skill:<名字>（如 /skill:lint；/skill 查看可用列表）' };
+    return { handled: true, output: await ctx.skills.apply(name) };
+  }
 
   switch (cmd) {
     case 'exit':
@@ -89,6 +102,7 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /models-update  拉取并合并远端模型目录（FR-6.1）',
           '  /extensions     列出已加载扩展与错误（M4）',
           '  /reload         热重载扩展（改完即生效）',
+          '  /skill:<名字>   加载 skill 指令注入上下文（如 /skill:lint；/skill 列出）',
           '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
@@ -144,6 +158,9 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
     case 'reload': {
       const msg = await ctx.extensions.reload();
       return { handled: true, output: msg };
+    }
+    case 'skill': {
+      return { handled: true, output: await ctx.skills.list() };
     }
 
     // ---- M2 会话命令 ----

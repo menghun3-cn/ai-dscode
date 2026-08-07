@@ -322,6 +322,20 @@ describe('AgentSession（M1-S4）', () => {
     expect(result.output).toContain('[blocked] 扩展禁止 bash');
   });
 
+  it('applySkill 注入 system prompt（M4-S6：/skill:<name> 渐进披露）', async () => {
+    // 造一个全局 skill
+    await fs.mkdir(path.join(home, 'skills'), { recursive: true });
+    await fs.writeFile(path.join(home, 'skills', 'lint.md'), '# Lint 规则\n- 使用 const', 'utf8');
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('ok')]) });
+    await session.prepare();
+    expect(await session.applySkill('lint')).toBe(true);
+    expect(await session.applySkill('nope')).toBe(false);
+    // 下一轮 LLM 调用应带上 skill 指令
+    const events = [];
+    for await (const ev of session.run('跑代码')) events.push(ev);
+    expect(events.some((e) => e.type === 'agent_settled')).toBe(true);
+  });
+
   it('/tree 语义：jumpTo 迁移激活分支，buildContextEntries 跟随（SC-2.3）', async () => {
     const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('a'), contentTurn('b')]) });
     for await (const _ of session.run('第一问')) {

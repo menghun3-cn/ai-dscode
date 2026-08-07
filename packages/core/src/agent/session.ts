@@ -16,6 +16,7 @@ import { buildContextEntries, branchPath } from '../session/context.js';
 import { newEntryId, type SessionEntry } from '../session/entries.js';
 import { EventBus } from '../extension/bus.js';
 import type { ExtensionToolDef } from '../extension/api.js';
+import { SkillManager } from '../skill/skill.js';
 
 /** LLM client 最小接口：@dscode/ai 的 OpenAIClient 结构化满足，测试可 mock */
 export interface ChatStreamer {
@@ -69,6 +70,7 @@ export class AgentSession {
   private readonly bus: EventBus;
   private readonly extTools: ExtensionToolDef[];
   private readonly extToolsSupplier?: () => ExtensionToolDef[];
+  private readonly skillManager: SkillManager;
   private client: ChatStreamer;
   private readonly clientFactory?: (modelId: string) => ChatStreamer | undefined;
   private modelId: string;
@@ -83,6 +85,7 @@ export class AgentSession {
     this.cwd = opts.cwd;
     this.tools = opts.tools;
     this.bus = opts.bus ?? new EventBus();
+    this.skillManager = new SkillManager({ cwd: opts.cwd });
     if (typeof opts.extTools === 'function') {
       this.extToolsSupplier = opts.extTools;
       this.extTools = [];
@@ -210,6 +213,19 @@ export class AgentSession {
   async label(name: string): Promise<void> {
     this.pushEntry('label', { name });
     await this.persist();
+  }
+
+  /** /skill:<name>：加载 skill 指令注入 system prompt（渐进披露，原理-agentloop.md §7） */
+  async applySkill(name: string): Promise<boolean> {
+    const skill = await this.skillManager.load(name);
+    if (!skill) return false;
+    this.systemPrompt = `${this.systemPrompt}\n\n## Skill: ${skill.name}\n${skill.content}`;
+    return true;
+  }
+
+  /** 列出可用 skill 名 */
+  async listSkills(): Promise<string[]> {
+    return this.skillManager.list();
   }
 
   /**
