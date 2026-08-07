@@ -56,12 +56,10 @@
 
 ---
 
-## Milestone 6：Compaction（v0.7）
+## Milestone 6：Compaction（v0.6）✅ 已完成
 
-- [ ] [P0] [M7] 压缩算法 — LLM 摘要旧消息写 compaction entry → 验收：SC-5.1
-- [ ] [P0] [M7] 触发器 — 阈值/manual/overflow → 验收：SC-5.2
-- [ ] [P1] [M7] branch summary — `/tree` 切分支时摘要被弃分支 → 验收：切回后关键事实保留
-- [ ] [P1] [M7] 扩展自定义摘要 — `session_before_compact` 返回自定义 → 验收：扩展摘要覆盖默认
+> **状态：2026-08-08 落地（SC-5.1 自动压缩、SC-5.2 手动压缩；含 P1 branch summary 与扩展自定义摘要）。**
+> M6 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 6。
 
 ---
 

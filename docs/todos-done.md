@@ -295,6 +295,41 @@
 
 ---
 
+## Milestone 6：Compaction（v0.6）✅ 2026-08-08 落地
+
+> 全部完成项从 todos-list.md 迁入（M6-S1~S4，含 P1）。SC-5.1/5.2 单测形态 + 真实网关 /compact 实测。
+
+### M6-S1 压缩算法（SC-5.1）
+- **完成时间**：2026-08-08
+- **内容**：`compact/compact.ts`——`estimateTokens`（启发式：中文 ~1.2/字、英文 ~0.25/char）、`selectCutPoint`（从最新倒着走保留最近 keepRecentTokens）、`summarizeMessages`（一次 LLM 调用产结构化摘要：目标/进度/关键文件/下一步）；`session.compact()`——emit session_before_compact → 选切点 → 摘要 → 写 compaction entry（M2 已建类型）→ 重建消息视图（`[压缩摘要]` user 消息 + 保留段）→ 落盘；LLM 摘要失败降级为截断文本兜底。
+- **证据**：`compact.test.ts` 6 条（估算/cut point/摘要/失败降级）；session.test.ts 手动压缩用例（compaction entry 落盘、视图收缩）。
+- **对应**：SC-5.1
+
+### M6-S2 触发器（SC-5.2）
+- **完成时间**：2026-08-08
+- **内容**：`compactThreshold`（默认 40000，`DSCODE_COMPACT_THRESHOLD` env 覆盖）+ `maybeAutoCompact` 接入 run() 两个收敛点（no-tool-calls / max-turns，SC-5.1 自动压缩）；CLI `/compact [指令]` 手动压缩（附加指令如"重点保留测试上下文"传入摘要，SC-5.2）。
+- **证据**：session.test.ts 自动压缩用例（阈值 2000 + 长消息 → compaction entry）；commands.test.ts /compact 用例。
+- **对应**：SC-5.1（自动）、SC-5.2（手动）
+
+### M6-S3 branch summary（后置 P1）
+- **完成时间**：2026-08-08
+- **内容**：`session.switchBranch()`——/tree 切分支时对"被弃尾段"（旧分支不在新路径的条目）写 branchSummary entry；`/tree <n>` 改走 switchBranch（原同步 jumpTo 保留）。
+- **证据**：session.test.ts switchBranch 用例（branchSummary entry 落盘）；commands.test.ts /tree 用例。
+- **对应**：原理-compact.md 附产品、todos M6 P1 验收（切回后关键事实保留）
+
+### M6-S4 扩展自定义摘要（后置 P1）
+- **完成时间**：2026-08-08
+- **内容**：`session_before_compact` 事件（M4 已建类型）；handler 返回 `{ block:true, reason:<自定义摘要> }` 覆盖 LLM 摘要。
+- **证据**：session.test.ts 扩展自定义摘要用例（未调 LLM，直接用扩展摘要）。
+- **对应**：todos M6 P1 验收（扩展摘要覆盖默认）
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **messages.length<=4 守卫冗余**：挡住自动压缩大单消息场景——`cutIndex===0` 检查已兜底小对话，移除守卫（并修 3 个测试：补轮次、加长消息到超 keepRecentTokens）。
+- **?? 与 || 混用 TS 错**：`opts.compactThreshold ?? Number(env) || 40000` 需括号 `?? (Number(env) || 40000)`。
+- **旧 /tree 测试过期**：/tree 改走 switchBranch 后旧断言（jumpTo + "已跳到节点"）失效——删除由新 M6 用例覆盖。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）
