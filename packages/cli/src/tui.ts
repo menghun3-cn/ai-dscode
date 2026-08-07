@@ -329,6 +329,8 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `已拒绝并持久化: ${rule}（下次该操作直接拦截）`;
       },
     },
+    // M6：手动压缩（/compact，SC-5.2）
+    compact: async (extra) => session.compact(extra),
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
       id: session.sessionId,
@@ -336,6 +338,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return session.activeBranch;
       },
       jumpTo: (entryId) => session.jumpTo(entryId),
+      switchBranch: (entryId) => session.switchBranch(entryId),
       forkFrom: (entryId) => session.forkFrom(entryId),
       clone: () => session.clone(),
       label: (name) => session.label(name),

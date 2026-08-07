@@ -453,4 +453,78 @@ describe('AgentSession（M1-S4）', () => {
     expect(result.output).toContain('子 agent 收集到 3 处 TODO');
     expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
   });
+
+  it('compact 手动压缩：写 compaction entry 并重建消息视图（SC-5.2）', async () => {
+    // 摘要轮：scriptedClient 的第一轮内容作为摘要
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([
+        [{ content: '- 目标：重构 auth', finishReason: 'stop' }],
+        contentTurn('后续回答'),
+      ]),
+    });
+    for await (const _ of session.run('第一问')) {
+      // drain
+    }
+    for await (const _ of session.run('第二问')) {
+      // drain
+    }
+    const before = session.messages.length; // 4 条
+    const result = await session.compact('重点保留测试上下文', 2);
+    expect(result).toContain('已压缩');
+    expect(session.messages.length).toBeLessThan(before); // 视图收缩
+    expect(session.messages[0]).toMatchObject({ role: 'user', content: expect.stringContaining('[压缩摘要]') });
+    expect(session.entries.some((e) => e.type === 'compaction')).toBe(true); // compaction entry 落盘
+  });
+
+  it('自动压缩：估算 token 超阈值触发（SC-5.1）', async () => {
+    const longTurn: StreamEvent[] = [
+      {
+        content: '回答'.repeat(6000), // 约 1.4 万 token，超过 keepRecentTokens 8000，可被切
+        finishReason: 'stop',
+      },
+    ];
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([longTurn, [{ content: '短摘要', finishReason: 'stop' }], contentTurn('ok')]),
+      compactThreshold: 2000, // 阈值很小，必触发
+    });
+    const events = [];
+    for await (const ev of session.run('长对话')) events.push(ev);
+    // 自动压缩后出现 compaction entry（摘要轮消费第二条）
+    expect(session.entries.some((e) => e.type === 'compaction')).toBe(true);
+    expect(events.some((e) => e.type === 'agent_settled')).toBe(true);
+  });
+
+  it('switchBranch：切分支时对被弃尾段写 branchSummary（M6）', async () => {
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('a'), contentTurn('b')]) });
+    for await (const _ of session.run('第一问')) {
+      // drain
+    }
+    const u1 = session.entries.find((e) => e.type === 'user')!;
+    const msg = await session.switchBranch(u1.id); // 切回最早的 user 节点 → 弃掉后续尾段
+    expect(msg).toContain('已切到节点');
+    expect(session.entries.some((e) => e.type === 'branchSummary')).toBe(true); // 被弃分支摘要落盘
+  });
+
+  it('扩展自定义摘要：session_before_compact 返回 {block,reason} 覆盖 LLM 摘要（M6 P1）', async () => {
+    const bus = new EventBus();
+    bus.on('session_before_compact', async () => ({ block: true, reason: '扩展自定义摘要' }));
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([contentTurn('a'), contentTurn('b'), contentTurn('c')]),
+      bus,
+    });
+    for await (const _ of session.run('第一问')) {
+      // drain
+    }
+    for await (const _ of session.run('第二问')) {
+      // drain
+    }
+    const result = await session.compact();
+    expect(result).toContain('扩展自定义摘要'); // 未调 LLM，直接用扩展摘要
+  });
 });

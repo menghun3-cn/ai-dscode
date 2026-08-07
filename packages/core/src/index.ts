@@ -31,5 +31,6 @@ export * from './extension/loader.js';
 export * from './skill/skill.js';
 export * from './permission/permission.js';
 export * from './plan/plan.js';
+export * from './compact/compact.js';
 
 export const CORE_PACKAGE_VERSION = '0.5.0';

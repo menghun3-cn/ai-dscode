@@ -14,6 +14,8 @@ export interface SlashSessionOps {
   activeBranch: SessionEntry[];
   /** /tree <n>：跳到历史节点改写分支 */
   jumpTo(entryId: string): boolean;
+  /** /tree <n>：切分支并保存被弃分支摘要（branch summary，M6） */
+  switchBranch: (entryId: string) => Promise<string>;
   /** /fork <n>：从历史节点生成新会话文件（旧文件不变） */
   forkFrom(entryId: string): Promise<string>;
   /** /clone：复制当前分支到新会话 */
@@ -63,6 +65,8 @@ export interface SlashCommandContext {
     allow: (rule: string) => Promise<string>;
     deny: (rule: string) => Promise<string>;
   };
+  /** M6：手动压缩（/compact，SC-5.2） */
+  compact: (extra?: string) => Promise<string>;
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -77,7 +81,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'skill', 'plan', 'accept-plan', 'plan-set', 'allow', 'deny', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'skill', 'plan', 'accept-plan', 'plan-set', 'allow', 'deny', 'compact', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -119,7 +123,8 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /accept-plan    接受计划，进入执行',
           '  /allow <规则>   允许规则并持久化（如 "bash:ls -la"，M5 P1）',
           '  /deny <规则>    拒绝规则并持久化（如 "bash:rm -rf *"）',
-          '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
+          '  /compact [指令]  手动压缩旧消息为摘要（如 /compact 重点保留测试上下文，SC-5.2）',
+          '  /tree    查看会话树；/tree <n> 切到该节点（被弃分支存摘要）',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
           '  /name <名字>  给当前会话命名',
@@ -197,6 +202,9 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
       if (!arg) return { handled: true, output: '用法: /deny <规则>（如 /deny "bash:rm -rf *"）' };
       return { handled: true, output: await ctx.permission.deny(arg) };
     }
+    case 'compact': {
+      return { handled: true, output: await ctx.compact(arg || undefined) };
+    }
 
     // ---- M2 会话命令 ----
     case 'tree': {
@@ -206,8 +214,7 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
         const idx = Number(arg) - 1;
         const entry = branch[idx];
         if (!entry) return { handled: true, output: `无效节点: ${arg}（/tree 查看列表）` };
-        ctx.session.jumpTo(entry.id);
-        return { handled: true, output: `已跳到节点 #${idx + 1}（${entry.type}）` };
+        return { handled: true, output: await ctx.session.switchBranch(entry.id) }; // 切分支 + 被弃分支摘要
       }
       const lines = branch.map((e, i) => {
         const preview = (e.content ?? e.name ?? '').slice(0, 60).replace(/\n/g, ' ');

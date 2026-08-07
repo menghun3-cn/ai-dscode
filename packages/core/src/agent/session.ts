@@ -19,6 +19,7 @@ import type { ExtensionToolDef } from '../extension/api.js';
 import { SkillManager } from '../skill/skill.js';
 import { PermissionEngine, isDangerousCommand } from '../permission/permission.js';
 import { PlanManager, WRITE_TOOLS } from '../plan/plan.js';
+import { selectCutPoint, serializeMessages, summarizeMessages, estimateMessagesTokens } from '../compact/compact.js';
 
 /** LLM client 最小接口：@dscode/ai 的 OpenAIClient 结构化满足，测试可 mock */
 export interface ChatStreamer {
@@ -40,6 +41,8 @@ export interface AgentSessionOptions {
   bus?: EventBus;
   /** M5：权限引擎（危险命令二次确认；缺省自建，无确认回调时默认拒绝） */
   permission?: PermissionEngine;
+  /** M6：自动压缩阈值（估算 token 超限即触发，SC-5.1；默认 40000，可用 DSCODE_COMPACT_THRESHOLD 覆盖） */
+  compactThreshold?: number;
   /** M4：扩展注册的工具（executeTool 未命中内置时回退）；可传 supplier 支持 /reload 后取最新 */
   extTools?: ExtensionToolDef[] | (() => ExtensionToolDef[]);
   model?: string;
@@ -76,6 +79,7 @@ export class AgentSession {
   private readonly extToolsSupplier?: () => ExtensionToolDef[];
   private readonly skillManager: SkillManager;
   private readonly permission: PermissionEngine;
+  private readonly compactThreshold: number;
   /** M5：Plan 模式（/plan 只读 → /accept-plan 落地，SC-4.4） */
   readonly plan = new PlanManager();
   private client: ChatStreamer;
@@ -94,6 +98,7 @@ export class AgentSession {
     this.bus = opts.bus ?? new EventBus();
     this.skillManager = new SkillManager({ cwd: opts.cwd });
     this.permission = opts.permission ?? new PermissionEngine();
+    this.compactThreshold = opts.compactThreshold ?? (Number(process.env['DSCODE_COMPACT_THRESHOLD']) || 40_000);
     if (typeof opts.extTools === 'function') {
       this.extToolsSupplier = opts.extTools;
       this.extTools = [];
@@ -206,6 +211,25 @@ export class AgentSession {
     return true;
   }
 
+  /**
+   * /tree 切分支（branch summary，原理-compact.md 附产品 / 原理-session.md §3.4）：
+   * 迁移激活分支时，对被放弃的尾段写 branchSummary entry（切回时靠摘要恢复关键事实）。
+   */
+  async switchBranch(entryId: string): Promise<string> {
+    if (!this.entries.some((e) => e.id === entryId)) return '无效节点';
+    const oldBranch = this.activeBranch;
+    this.activeEntryId = entryId;
+    const newIds = new Set(this.activeBranch.map((e) => e.id));
+    // 被弃段：旧分支里不在新分支路径上的条目（自切换点之后的分叉尾段）
+    const abandoned = oldBranch.filter((e) => !newIds.has(e.id) && e.type !== 'branchSummary');
+    if (abandoned.length > 0) {
+      const text = abandoned.map((e) => `[${e.type}] ${(e.content ?? e.name ?? '').slice(0, 300)}`).join('\n');
+      this.pushEntry('branchSummary', { content: `被放弃分支摘要：\n${text}` });
+      await this.persist();
+    }
+    return `已切到节点 ${entryId.slice(0, 8)}…（被弃 ${abandoned.length} 条已存分支摘要）`;
+  }
+
   /** /fork：从历史节点生成新 session 文件（旧文件不变，SC-2.4） */
   async forkFrom(entryId: string): Promise<string> {
     const path = branchPath(this.entries, entryId);
@@ -234,6 +258,46 @@ export class AgentSession {
   /** 列出可用 skill 名 */
   async listSkills(): Promise<string[]> {
     return this.skillManager.list();
+  }
+
+  /** M6 自动压缩：估算 token 超阈值即触发（SC-5.1） */
+  private async maybeAutoCompact(): Promise<void> {
+    if (estimateMessagesTokens(this.messages) > this.compactThreshold) {
+      await this.compact();
+    }
+  }
+
+  /**
+   * Compaction（原理-compact.md、SC-5.1/5.2）：
+   * 把 messages 中远离焦点的旧段压缩为摘要，写 compaction entry 并重建 LLM 视图。
+   * @param extra /compact 附加指令（如"重点保留测试相关上下文"）
+   * @param keepRecentTokens 保留最近估算 token 量（默认 8000）
+   */
+  async compact(extra?: string, keepRecentTokens = 8_000): Promise<string> {
+    // 扩展自定义摘要：session_before_compact 返回 { block:true, reason:<摘要> } 则覆盖 LLM 摘要（todos M6 P1）
+    const before = await this.bus.emit('session_before_compact', { tokensBefore: estimateMessagesTokens(this.messages) });
+    let summary: string | null = before?.block && before.reason ? before.reason : null;
+
+    const cut = selectCutPoint(this.messages, keepRecentTokens);
+    if (cut.cutIndex === 0 && !summary) return '上下文未达到压缩阈值';
+
+    if (!summary) {
+      const cutMessages = this.messages.slice(0, cut.cutIndex);
+      summary = await summarizeMessages(this.client, cutMessages, { model: this.modelId, extra });
+      // 降级：LLM 摘要失败时用截断文本兜底
+      if (!summary) {
+        summary = `（摘要降级：截断）\n${serializeMessages(cutMessages).slice(0, 2000)}`;
+      }
+    }
+
+    // 写 compaction entry（M2 已建类型；buildContextEntries 会折叠为 [压缩摘要] user 消息）
+    this.pushEntry('compaction', { content: summary });
+    // 重建 LLM 视图：摘要 user 消息 + 保留段
+    const kept = this.messages.slice(cut.cutIndex);
+    this.messages.length = 0;
+    this.messages.push({ role: 'user', content: `[压缩摘要] ${summary}` }, ...kept);
+    await this.persist();
+    return `已压缩（切掉 ${cut.cutTokens} tok 估量，保留 ${kept.length} 条消息）：\n${summary}`;
   }
 
   /**
@@ -324,6 +388,7 @@ export class AgentSession {
 
       // 收敛：无 tool_call → 结束
       if (toolCalls.length === 0) {
+        await this.maybeAutoCompact();
         await this.persist();
         await this.bus.emit('agent_settled', { reason: 'no-tool-calls', usage });
         await this.bus.emit('agent_end', { reason: 'no-tool-calls' });
@@ -360,6 +425,7 @@ export class AgentSession {
       await this.bus.emit('turn_end', { turn });
     }
 
+    await this.maybeAutoCompact();
     await this.persist();
     await this.bus.emit('agent_settled', { reason: 'max-turns', usage });
     await this.bus.emit('agent_end', { reason: 'max-turns' });

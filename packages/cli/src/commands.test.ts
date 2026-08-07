@@ -19,6 +19,7 @@ function makeSessionOps(overrides: Partial<SlashSessionOps> = {}): SlashSessionO
       { id: 'a1', parentId: 'u1', type: 'assistant', timestamp: 2, content: '收到' },
     ],
     jumpTo: vi.fn((id) => id === 'u1' || id === 'a1'),
+    switchBranch: vi.fn(async (id) => `已切到节点 ${id.slice(0, 8)}…（被弃 1 条已存分支摘要）`),
     forkFrom: vi.fn(async () => 'fork-new-123'),
     clone: vi.fn(async () => 'clone-new-123'),
     label: vi.fn(async () => {}),
@@ -64,6 +65,7 @@ function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandCont
       allow: vi.fn(async (rule) => `已允许: ${rule}`),
       deny: vi.fn(async (rule) => `已拒绝: ${rule}`),
     },
+    compact: vi.fn(async (extra) => `已压缩（${extra ?? '默认'}）`),
     session: makeSessionOps(),
     ...overrides,
   };
@@ -177,6 +179,23 @@ describe('handleSlash（todos M1-S5 验收）', () => {
     expect(r2.output).toContain('已拒绝');
   });
 
+  it('/compact 手动压缩（SC-5.2，支持附加指令）', async () => {
+    const ctx = makeCtx();
+    const r = await handleSlash('/compact 重点保留测试上下文', ctx);
+    expect(ctx.compact).toHaveBeenCalledWith('重点保留测试上下文');
+    expect(r.output).toContain('已压缩');
+    // 无参数 → undefined
+    await handleSlash('/compact', ctx);
+    expect(ctx.compact).toHaveBeenCalledWith(undefined);
+  });
+
+  it('/tree <n> 切分支并保存被弃分支摘要（M6）', async () => {
+    const ctx = makeCtx();
+    const r = await handleSlash('/tree 1', ctx);
+    expect(ctx.session.switchBranch).toHaveBeenCalledWith('u1');
+    expect(r.output).toContain('已切到节点');
+  });
+
   it('/clear 清空会话', async () => {
     const ctx = makeCtx();
     const r = await handleSlash('/clear', ctx);
@@ -196,13 +215,6 @@ describe('M2 会话命令', () => {
     expect(r.output).toContain('#1 [user]');
     expect(r.output).toContain('#2 [assistant]');
     expect(r.output).toContain('/tree <n> 跳到该节点');
-  });
-
-  it('/tree <n> 跳到节点并改写分支', async () => {
-    const ctx = makeCtx();
-    const r = await handleSlash('/tree 1', ctx);
-    expect(ctx.session.jumpTo).toHaveBeenCalledWith('u1');
-    expect(r.output).toContain('已跳到节点 #1');
   });
 
   it('/tree 无效节点提示', async () => {
