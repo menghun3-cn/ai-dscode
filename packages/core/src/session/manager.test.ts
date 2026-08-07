@@ -73,6 +73,15 @@ describe('SessionManager（原理-session.md §2/§5）', () => {
     expect(await mgr.latestId()).toBe(b);
   });
 
+  it('list 带 /name 会话名（取最后一个 label entry，M2 P1 检索）', async () => {
+    const mgr = new SessionManager(tmp);
+    const id = await mgr.create();
+    await mgr.append(id, makeEntry('user', { content: 'a' }));
+    await mgr.append(id, makeEntry('label', { name: '重构会话' }));
+    const meta = (await mgr.list()).find((m) => m.id === id);
+    expect(meta?.name).toBe('重构会话');
+  });
+
   it('fork 语义：create(path) 生成新文件，旧文件不变（SC-2.4 数据层）', async () => {
     const mgr = new SessionManager(tmp);
     const oldId = await mgr.create();

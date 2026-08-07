@@ -217,16 +217,19 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       forkFrom: (entryId) => session.forkFrom(entryId),
       clone: () => session.clone(),
       label: (name) => session.label(name),
-      exportMarkdown: async () => {
+      exportMarkdown: async (html = false) => {
         const { promises: fs } = await import('node:fs');
         const path = await import('node:path');
-        const lines = session.activeBranch.map((e) => {
-          const body = e.content ?? e.name ?? '';
-          return `**${e.type}**\n\n${body}\n\n---\n`;
-        });
-        const md = `# dscode session ${session.sessionId}\n\n${lines.join('\n')}`;
-        const file = path.join(session.cwd, `dscode-session-${session.sessionId.slice(0, 8)}.md`);
-        await fs.writeFile(file, md, 'utf8');
+        const { renderSessionMarkdown, renderSessionHtml } = await import('./export.js');
+        const branch = session.activeBranch;
+        const content = html
+          ? renderSessionHtml({ sessionId: session.sessionId, branch })
+          : renderSessionMarkdown({ sessionId: session.sessionId, branch });
+        const file = path.join(
+          session.cwd,
+          html ? `dscode-session-${session.sessionId.slice(0, 8)}.html` : `dscode-session-${session.sessionId.slice(0, 8)}.md`,
+        );
+        await fs.writeFile(file, content, 'utf8');
         return file;
       },
       listSessions: async () => {

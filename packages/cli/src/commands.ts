@@ -20,10 +20,10 @@ export interface SlashSessionOps {
   clone(): Promise<string>;
   /** /name <名字>：会话命名（label entry） */
   label(name: string): Promise<void>;
-  /** /export：导出当前分支为 markdown，返回文件路径 */
-  exportMarkdown(): Promise<string>;
-  /** /resume：列出本目录会话 */
-  listSessions(): Promise<Array<{ id: string; entries: number; mtime: number }>>;
+  /** /export：导出当前分支为 markdown（或 /export html），返回文件路径 */
+  exportMarkdown(html?: boolean): Promise<string>;
+  /** /resume：列出本目录会话（含 /name 会话名） */
+  listSessions(): Promise<Array<{ id: string; entries: number; mtime: number; name?: string }>>;
 }
 
 export interface SlashCommandContext {
@@ -148,13 +148,16 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
       return { handled: true, output: `已命名会话: ${arg}` };
     }
     case 'export': {
-      const file = await ctx.session.exportMarkdown();
-      return { handled: true, output: `已导出: ${file}` };
+      const isHtml = arg.trim().toLowerCase() === 'html';
+      const file = await ctx.session.exportMarkdown(isHtml);
+      return { handled: true, output: `已导出（${isHtml ? 'HTML' : 'Markdown'}）: ${file}` };
     }
     case 'resume': {
       const list = await ctx.session.listSessions();
       if (list.length === 0) return { handled: true, output: '本目录暂无会话' };
-      const lines = list.map((m, i) => `  ${i + 1}. ${m.id.slice(0, 8)}…（${m.entries} 条，${new Date(m.mtime).toLocaleString()}）`);
+      const lines = list.map(
+        (m, i) => `  ${i + 1}. ${m.name ? `「${m.name}」` : m.id.slice(0, 8)}…（${m.entries} 条，${new Date(m.mtime).toLocaleString()}）`,
+      );
       return {
         handled: true,
         output: `本目录会话（${list.length} 个）:\n${lines.join('\n')}\n重启后用 dscode -c 续最近 / dscode -r 选择恢复`,

@@ -160,6 +160,12 @@ describe('M2 会话命令', () => {
   it('/export 导出 markdown 返回路径', async () => {
     const r = await handleSlash('/export', makeCtx());
     expect(r.output).toContain('/tmp/dscode-session-abc123.md');
+    expect(r.output).toContain('Markdown');
+  });
+
+  it('/export html 导出 HTML', async () => {
+    const r = await handleSlash('/export html', makeCtx());
+    expect(r.output).toContain('HTML');
   });
 
   it('/resume 列出本目录会话', async () => {

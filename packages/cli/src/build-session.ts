@@ -30,7 +30,7 @@ export async function resolveSessionId(args: CliArgs): Promise<string | undefine
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     try {
       const shown = list
-        .map((m, i) => `  ${i + 1}. ${m.id.slice(0, 8)}…（${m.entries} 条，${new Date(m.mtime).toLocaleString()}）`)
+        .map((m, i) => `  ${i + 1}. ${m.name ? `「${m.name}」` : m.id.slice(0, 8)}（${m.entries} 条，${new Date(m.mtime).toLocaleString()}）`)
         .join('\n');
       process.stderr.write(`当前目录会话（${list.length} 个）:\n${shown}\n选择编号（回车=最近）: `);
       const answer = (await rl.question('')).trim();

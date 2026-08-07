@@ -22,12 +22,22 @@ export function hashCwd(cwd: string): string {
   return createHash('sha256').update(path.resolve(cwd)).digest('hex').slice(0, 12);
 }
 
+/** 取最后一个 label entry 的会话名（/name 检索用）；无则 undefined */
+function lastLabel(entries: SessionEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i]!.type === 'label' && entries[i]!.name) return entries[i]!.name;
+  }
+  return undefined;
+}
+
 export interface SessionMeta {
   id: string;
   /** 最后修改时间戳 */
   mtime: number;
   /** entry 数（用于列表展示） */
   entries: number;
+  /** /name 设置的会话名（最后一个 label entry；无则 undefined） */
+  name?: string;
 }
 
 export class SessionManager {
@@ -41,7 +51,7 @@ export class SessionManager {
     return path.join(this.dir(), `${id}.jsonl`);
   }
 
-  /** 列出当前 cwd 下全部会话（按 mtime 倒序） */
+  /** 列出当前 cwd 下全部会话（按 mtime 倒序）；带 /name 会话名 */
   async list(): Promise<SessionMeta[]> {
     let names: string[];
     try {
@@ -56,8 +66,13 @@ export class SessionManager {
       const full = path.join(this.dir(), name);
       try {
         const st = await fs.stat(full);
-        const entries = await this.countEntries(full);
-        metas.push({ id, mtime: st.mtimeMs, entries });
+        const entries = await this.read(id); // 复用：损坏行跳过
+        metas.push({
+          id,
+          mtime: st.mtimeMs,
+          entries: entries.length,
+          name: lastLabel(entries),
+        });
       } catch {
         // 跳过读不到的
       }
