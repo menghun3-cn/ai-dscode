@@ -150,6 +150,10 @@ export class AgentSession {
         return;
       }
 
+      // 先发出 tool_call 事件，再并行执行（事件设计见 events.ts / 原理-agentloop.md §8）
+      for (const tc of toolCalls) {
+        yield { type: 'tool_call', toolCallId: tc.id, toolName: tc.function.name, args: tc.function.arguments };
+      }
       // 并行执行（错误隔离：单工具失败不连坐）
       const outcomes = await Promise.all(toolCalls.map((tc) => this.executeTool(tc)));
       for (const o of outcomes) {

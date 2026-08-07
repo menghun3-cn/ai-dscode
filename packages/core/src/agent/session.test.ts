@@ -82,6 +82,10 @@ describe('AgentSession（M1-S4）', () => {
     });
     const events = [];
     for await (const ev of session.run('读取 a.txt')) events.push(ev);
+    // tool_call 事件必须先于 tool_result 发出（事件设计见 events.ts / 原理-agentloop.md §8）
+    const calls = events.filter((e) => e.type === 'tool_call');
+    expect(calls).toHaveLength(1);
+    expect((calls[0] as { toolName: string }).toolName).toBe('read');
     const toolResults = events.filter((e) => e.type === 'tool_result');
     expect(toolResults).toHaveLength(1);
     expect((toolResults[0] as { output: string }).output).toContain('hello');

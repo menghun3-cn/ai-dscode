@@ -29,6 +29,9 @@ const key =
     return i > -1 ? process.argv[i + 1] : undefined;
   })();
 
+/** 模型可配置（本地网关/代理常只启用特定模型，如 deepseek-v4-flash） */
+const model = process.env['DSCCODE_TEST_MODEL'] ?? 'deepseek-chat';
+
 const results = [];
 
 function record(id, name, status, evidence = '') {
@@ -36,10 +39,10 @@ function record(id, name, status, evidence = '') {
   console.log(` ${status.padEnd(4)} ${id.padEnd(7)} ${name}${evidence ? ` — ${evidence}` : ''}`);
 }
 
-/** spawn CLI，返回 {code, stdout, stderr}；支持注入 env / stdin / cwd */
-function runCli(args, { env = {}, input = '', cwd = REPO, timeoutMs = 30_000 } = {}) {
+/** spawn CLI，返回 {code, stdout, stderr}；支持注入 env / stdin / cwd；自动带 --model */
+function runCli(args, { env = {}, input = '', cwd = REPO, timeoutMs = 150_000 } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [CLI, '--model', model, ...args], {
       cwd,
       env: { ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -67,27 +70,33 @@ function runCli(args, { env = {}, input = '', cwd = REPO, timeoutMs = 30_000 } =
   });
 }
 
-/** 通过库 API 直接驱动 AgentSession（失败轨迹 dump 与 SC-1.7 多轮计数用） */
-async function runLibrary(prompt, cwd, apiKey) {
+/** 通过库 API 直接驱动 AgentSession（失败轨迹 dump 与 SC-1.7 多轮计数用）；带超时防挂死 */
+async function runLibrary(prompt, cwd, apiKey, timeoutMs = 120_000) {
   const [core, ai] = await Promise.all([
     import(pathToFileURL(path.join(REPO, 'packages', 'core', 'dist', 'index.js')).href),
     import(pathToFileURL(path.join(REPO, 'packages', 'ai', 'dist', 'index.js')).href),
   ]);
   const client = new ai.OpenAIClient({ baseUrl: ai.resolveBaseUrl(), apiKey });
-  const session = core.AgentSessionRuntime.create({ cwd, tools: core.createBuiltinRegistry(), client });
-  const lines = [];
-  let toolCalls = 0;
-  for await (const ev of session.run(prompt)) {
-    if (ev.type === 'tool_call') {
-      toolCalls += 1;
-      lines.push(`  tool_call: ${ev.toolName} ${ev.args.slice(0, 200)}`);
-    } else if (ev.type === 'tool_result') {
-      lines.push(`  tool_result: ${ev.toolName} ${ev.isError ? 'ERROR' : 'ok'} ${ev.output.slice(0, 200)}`);
-    } else if (ev.type === 'agent_settled') {
-      lines.push(`  收敛: ${ev.reason}`);
+  const session = core.AgentSessionRuntime.create({ cwd, tools: core.createBuiltinRegistry(), client, model });
+  const killTimer = setTimeout(() => session.abort(), timeoutMs);
+  try {
+    const lines = [];
+    let toolCalls = 0;
+    for await (const ev of session.run(prompt)) {
+      if (ev.type === 'tool_call') {
+        toolCalls += 1;
+        lines.push(`  tool_call: ${ev.toolName} ${ev.args.slice(0, 200)}`);
+      } else if (ev.type === 'tool_result') {
+        lines.push(`  tool_result: ${ev.toolName} ${ev.isError ? 'ERROR' : 'ok'} ${ev.output.slice(0, 200)}`);
+      } else if (ev.type === 'agent_settled') {
+        lines.push(`  收敛: ${ev.reason}`);
+      }
     }
+    return { lines, toolCalls };
+  } finally {
+    clearTimeout(killTimer);
+    session.dispose();
   }
-  return { lines, toolCalls };
 }
 
 async function makeSandbox() {
@@ -183,7 +192,17 @@ async function sc17() {
     );
     // 初始测试失败，留一个易修复的 bug：1+1 误写为 3
     await fs.writeFile(path.join(sb.dir, 'test.js'), 'const { strictEqual } = require("node:assert"); strictEqual(1 + 1, 3);\n', 'utf8');
-    const { lines, toolCalls } = await runLibrary('跑 npm test，失败就修复直到通过', sb.dir, key);
+    let lines;
+    let toolCalls = 0;
+    try {
+      // 多轮修复测试较耗时：给足 240s（本地推理代理每轮调用慢）
+      const r = await runLibrary('跑 npm test，失败就修复直到通过', sb.dir, key, 240_000);
+      lines = r.lines;
+      toolCalls = r.toolCalls;
+    } catch (err) {
+      record('SC-1.7', 'Agent Loop 多轮', 'FAIL', `runLibrary 异常: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
     const { execSync } = await import('node:child_process');
     let finalOk = false;
     try {
@@ -241,29 +260,46 @@ async function sc110() {
 }
 
 async function main() {
-  console.log(`M1 验收（成功标准 SC-1.1 ~ SC-1.10）${key ? ' — 全量实测' : ' — 无 key，LLM 相关项 SKIP'}\n`);
-  await sc11();
-  await sc12();
-  await scTool('SC-1.3', { 'a.txt': 'hello' }, '读取 a.txt 并复述内容', async (dir, r) => r.stdout.includes('hello'), 'read 工具');
-  await scTool('SC-1.4', {}, '创建文件 b.txt 内容为 world', async (dir) => {
+  // DSCCODE_VERIFY_ONLY：逗号分隔的 SC 子集（如 SC-1.6,SC-1.7），便于分段跑
+  const only = (process.env['DSCCODE_VERIFY_ONLY'] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const shouldRun = (id) => only.length === 0 || only.includes(id);
+  console.log(`M1 验收（成功标准 SC-1.1 ~ SC-1.10）${key ? ' — 全量实测' : ' — 无 key，LLM 相关项 SKIP'}${only.length ? `（仅 ${only.join(',')}）` : ''}\n`);
+  const t0 = Date.now();
+  const started = (id, name) => console.log(`→ 运行 ${id} ${name} ...`);
+  if (shouldRun('SC-1.1')) await sc11();
+  started('SC-1.2', '环境变量鉴权');
+  if (shouldRun('SC-1.2')) await sc12();
+  started('SC-1.3', 'read 工具');
+  if (shouldRun('SC-1.3')) await scTool('SC-1.3', { 'a.txt': 'hello' }, '读取 a.txt 并复述内容', async (dir, r) => r.stdout.includes('hello'), 'read 工具');
+  started('SC-1.4', 'write 工具');
+  if (shouldRun('SC-1.4')) await scTool('SC-1.4', {}, '创建文件 b.txt 内容为 world', async (dir) => {
     try {
       return (await fs.readFile(path.join(dir, 'b.txt'), 'utf8')).trim() === 'world';
     } catch {
       return false;
     }
   }, 'write 工具');
-  await scTool('SC-1.5', { 'c.txt': 'foo bar' }, '把 c.txt 里的 foo 改成 baz', async (dir) => {
+  started('SC-1.5', 'edit 工具');
+  if (shouldRun('SC-1.5')) await scTool('SC-1.5', { 'c.txt': 'foo bar' }, '把 c.txt 里的 foo 改成 baz', async (dir) => {
     try {
       return (await fs.readFile(path.join(dir, 'c.txt'), 'utf8')).trim() === 'baz bar';
     } catch {
       return false;
     }
   }, 'edit 工具');
-  await scTool('SC-1.6', {}, "运行 node -e 'console.log(1+1)' 并告诉我结果", async (_dir, r) => r.stdout.includes('2'), 'bash 工具');
-  await sc17();
-  await sc18();
-  await sc19();
-  await sc110();
+  started('SC-1.6', 'bash 工具');
+  if (shouldRun('SC-1.6')) await scTool('SC-1.6', {}, "运行 node -e 'console.log(1+1)' 并告诉我结果", async (_dir, r) => r.stdout.includes('2'), 'bash 工具');
+  started('SC-1.7', 'Agent Loop 多轮');
+  if (shouldRun('SC-1.7')) await sc17();
+  started('SC-1.8', 'print 模式管道');
+  if (shouldRun('SC-1.8')) await sc18();
+  started('SC-1.9', 'interactive 基本可用');
+  if (shouldRun('SC-1.9')) await sc19();
+  started('SC-1.10', '中文回退');
+  if (shouldRun('SC-1.10')) await sc110();
 
   const pass = results.filter((r) => r.status === 'PASS').length;
   const fail = results.filter((r) => r.status === 'FAIL').length;

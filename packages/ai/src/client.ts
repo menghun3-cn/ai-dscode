@@ -96,6 +96,8 @@ export class OpenAIClient {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort);
+    // 总超时兜底：本地代理/网络挂死时不至于无限等待（此前 timeoutMs 未接线）
+    const timeoutTimer = setTimeout(() => controller.abort(new Error(`provider 请求超时（${this.timeoutMs}ms）`)), this.timeoutMs);
     try {
       const res = await this.fetchWithRetry(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -125,13 +127,18 @@ export class OpenAIClient {
           const event = this.parseChunk(ev, toolAcc);
           if (event) yield event;
         }
+        // 已收到 [DONE]：流结束，不等连接关闭（部分代理发完 [DONE] 后保持连接不关）
+        if (parser.isDone) break;
       }
-      // 尾部残留
-      for (const ev of parser.push(decoder.decode())) {
-        const event = this.parseChunk(ev, toolAcc);
-        if (event) yield event;
+      // 尾部残留（未遇 [DONE] 且无更多数据时冲刷）
+      if (!parser.isDone) {
+        for (const ev of parser.push(decoder.decode())) {
+          const event = this.parseChunk(ev, toolAcc);
+          if (event) yield event;
+        }
       }
     } finally {
+      clearTimeout(timeoutTimer);
       opts.signal?.removeEventListener('abort', onAbort);
     }
   }

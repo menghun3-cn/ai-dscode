@@ -73,6 +73,31 @@ describe('OpenAIClient.streamChat', () => {
     expect(seen.reasoning).toBe('thinking...');
     expect(seen.content).toBe('answer');
   });
+
+  it('[DONE] 后连接不关闭也能结束（回归：本地代理挂死）', async () => {
+    // 模拟代理：发完 [DONE] 后保持连接不关（不 close controller）
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sseChunk('{"choices":[{"delta":{"content":"ok"},"index":0}]}')));
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        // 故意不 controller.close()：连接保持打开
+      },
+    });
+    const fetchImpl: FetchLike = () => Promise.resolve(new Response(body, { status: 200 }));
+    const chunks: string[] = [];
+    // 给 read 循环一个总超时保护，防止回归后重新挂死
+    const timer = setTimeout(() => {
+      throw new Error('streamChat 未在 [DONE] 后结束');
+    }, 5_000);
+    try {
+      for await (const ev of client(fetchImpl).streamChat({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })) {
+        if (ev.content) chunks.push(ev.content);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(chunks.join('')).toBe('ok');
+  });
 });
 
 describe('OpenAIClient 重试与错误', () => {
