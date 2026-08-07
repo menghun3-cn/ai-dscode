@@ -157,4 +157,12 @@ pnpm verify          # 默认模型 deepseek-v4-flash；可分段跑（DSCODE_VE
 
 ## License
 
-待定（倾向 Apache-2.0）。设计借鉴 pi、Claude Code 等，落地时在代码与文档中注明出处。
+MIT License（见 [LICENSE](LICENSE)）。Copyright (c) 2026 menghun3-cn。
+
+## 致谢（Acknowledgments）
+
+dscode 的设计借鉴了以下项目的公开设计文档/理念——所有实现均为**独立自主实现**（非逐行抄写，命名与代码为本项目原创）：
+
+- **pi**（DesignDocs / dist 公开可读）——session JSONL 树状格式、compaction、plan-and-execute 等核心机制的设计参考。
+- **Claude Code / Codex CLI / Cursor / OpenCode**——Agent Loop、工具调用、权限与审批模式等业界通用范式参考。
+- **MCP（Model Context Protocol）**——外部工具/资源接入协议（dscode 为独立 client 实现）。
