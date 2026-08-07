@@ -8,12 +8,18 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "dscode": "./dist/dscode-cli.js"
+  },
+  "files": ["dist/dscode-cli.js"],
   "scripts": {
     "build": "pnpm -r build",
     "test": "vitest run",
     "typecheck": "pnpm -r exec tsc --noEmit",
     "verify": "pnpm -r build && node scripts/verify-m1.mjs",
-    "build:binary": "pnpm -r build && bun build --compile packages/cli/src/index.ts --outfile dist/dscode"
+    "build:binary": "pnpm -r build && bun build --compile packages/cli/src/index.ts --outfile dist/dscode",
+    "bundle:cli": "bun build packages/cli/src/index.ts --outfile dist/dscode-cli.js --target node",
+    "prepublishOnly": "pnpm -r build && bun build packages/cli/src/index.ts --outfile dist/dscode-cli.js --target node"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
