@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest/
+
+# Logs & debug
+*.log
+logs/
+~/.dscode/logs/
+
+# Local runtime data (do NOT commit)
+.dscode/settings.json
+.dscode/permissions.json
+.dscode/extensions/
+~/.dscode/auth.json
+~/.dscode/sessions/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Bun
+*.bun
