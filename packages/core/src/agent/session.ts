@@ -6,10 +6,14 @@
  * - dispose() 释放（M1-S4 验收：new + dispose 无异常）
  */
 
+import { randomUUID } from 'node:crypto';
 import type { ChatMessage, ToolCall, StreamEvent, StreamUsage } from '@dscode/ai';
 import type { ToolRegistry } from '../tool.js';
 import type { AgentEvent } from './events.js';
 import { assembleSystemPrompt } from './prompt.js';
+import { SessionManager } from '../session/manager.js';
+import { buildContextEntries, branchPath } from '../session/context.js';
+import { newEntryId, type SessionEntry } from '../session/entries.js';
 
 /** LLM client 最小接口：@dscode/ai 的 OpenAIClient 结构化满足，测试可 mock */
 export interface ChatStreamer {
@@ -29,6 +33,10 @@ export interface AgentSessionOptions {
   maxTurns?: number;
   systemPromptExtra?: string;
   debug?: boolean;
+  /** M2：复用已有 session id（resume）；缺省则新建并自动持久化 */
+  sessionId?: string;
+  /** 是否自动落盘（测试可关）；默认 true */
+  persist?: boolean;
 }
 
 export interface ToolCallOutcome {
@@ -41,6 +49,14 @@ export interface ToolCallOutcome {
 export class AgentSession {
   readonly messages: ChatMessage[] = [];
   readonly cwd: string;
+  /** M2：session id（resume/fork/clone 用） */
+  readonly sessionId: string;
+  /** M2：完整 session 树（可审计历史；LLM 视角由 buildContextEntries 折叠） */
+  readonly entries: SessionEntry[] = [];
+  /** 当前激活分支的末端 entry id */
+  private activeEntryId: string | null = null;
+  private readonly sessionManager: SessionManager;
+  private readonly persistEnabled: boolean;
   private readonly tools: ToolRegistry;
   private readonly client: ChatStreamer;
   private modelId: string;
@@ -59,7 +75,14 @@ export class AgentSession {
     this.maxTurns = opts.maxTurns ?? 50;
     this.systemPromptExtra = opts.systemPromptExtra;
     this.debug = opts.debug ?? process.env.DSCODE_DEBUG === '1';
+    this.sessionId = opts.sessionId ?? randomUUID();
+    this.sessionManager = new SessionManager(opts.cwd);
+    this.persistEnabled = opts.persist ?? true;
+    if (opts.sessionId) this.pendingRestore = true;
   }
+
+  /** resume：等待 prepare() 时从磁盘加载历史 */
+  private pendingRestore = false;
 
   /** 当前模型 id（/model 查询与切换，M1-S5） */
   get model(): string {
@@ -89,12 +112,77 @@ export class AgentSession {
 
   /** 组装 system prompt（含 DSCODE.md / steering，见 prompt.ts） */
   async prepare(): Promise<void> {
+    // resume：从磁盘加载历史（若有 sessionId），再重建 LLM 视角
+    if (this.pendingRestore) {
+      this.pendingRestore = false;
+      const loaded = await this.sessionManager.read(this.sessionId);
+      if (loaded.length > 0) {
+        this.entries.push(...loaded);
+        this.savedCount = this.entries.length;
+        this.activeEntryId = this.entries[this.entries.length - 1]!.id;
+        this.messages.push(...buildContextEntries(this.entries, this.activeEntryId));
+      }
+    }
     this.systemPrompt = await assembleSystemPrompt({
       tools: this.tools.getAll(),
       cwd: this.cwd,
       extra: this.systemPromptExtra,
       debug: this.debug,
     });
+  }
+
+  /** 追加一个 entry 并推进激活分支；返回新 entry */
+  private pushEntry(type: SessionEntry['type'], fields: Partial<SessionEntry> = {}): SessionEntry {
+    const entry: SessionEntry = {
+      id: newEntryId(type === 'toolResult' ? 't' : type === 'assistant' ? 'a' : 'u'),
+      parentId: this.activeEntryId,
+      type,
+      timestamp: Date.now(),
+      ...fields,
+    };
+    this.entries.push(entry);
+    this.activeEntryId = entry.id;
+    return entry;
+  }
+
+  /** 把新增 entry 追加落盘（JSONL 追加写，见 原理-session.md §5） */
+  private savedCount = 0;
+  private async persist(): Promise<void> {
+    if (!this.persistEnabled) return;
+    const unsaved = this.entries.slice(this.savedCount);
+    for (const e of unsaved) {
+      await this.sessionManager.append(this.sessionId, e);
+    }
+    this.savedCount = this.entries.length;
+  }
+
+  /** 分支路径（从根到当前激活节点）——/tree 展示与 fork 用 */
+  get activeBranch(): SessionEntry[] {
+    return branchPath(this.entries, this.activeEntryId);
+  }
+
+  /** /tree：跳到历史节点，从该处改写分支（activeEntryId 迁移） */
+  jumpTo(entryId: string): boolean {
+    if (!this.entries.some((e) => e.id === entryId)) return false;
+    this.activeEntryId = entryId;
+    return true;
+  }
+
+  /** /fork：从历史节点生成新 session 文件（旧文件不变，SC-2.4） */
+  async forkFrom(entryId: string): Promise<string> {
+    const path = branchPath(this.entries, entryId);
+    return this.sessionManager.create(path);
+  }
+
+  /** /clone：复制当前分支到新 session（原 session 不动） */
+  async clone(): Promise<string> {
+    return this.sessionManager.create([...this.activeBranch]);
+  }
+
+  /** /name：给会话命名（label entry），并落盘 */
+  async label(name: string): Promise<void> {
+    this.pushEntry('label', { name });
+    await this.persist();
   }
 
   /**
@@ -112,6 +200,7 @@ export class AgentSession {
     }
 
     this.messages.push({ role: 'user', content: input });
+    this.pushEntry('user', { role: 'user', content: input });
     yield { type: 'agent_start', input };
 
     // 累计所有 LLM 调用轮的 usage（tokens 数据源，供 TUI 显示）
@@ -125,6 +214,7 @@ export class AgentSession {
 
     for (let turn = 0; turn < this.maxTurns; turn++) {
       if (this.abortController.signal.aborted) {
+        await this.persist();
         yield { type: 'agent_settled', reason: 'aborted', usage };
         return;
       }
@@ -159,9 +249,16 @@ export class AgentSession {
         content: content || null,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
+      this.pushEntry('assistant', {
+        role: 'assistant',
+        content: content || null,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        usage,
+      });
 
       // 收敛：无 tool_call → 结束
       if (toolCalls.length === 0) {
+        await this.persist();
         yield { type: 'agent_settled', reason: 'no-tool-calls', usage };
         return;
       }
@@ -174,10 +271,12 @@ export class AgentSession {
       const outcomes = await Promise.all(toolCalls.map((tc) => this.executeTool(tc)));
       for (const o of outcomes) {
         this.messages.push({ role: 'tool', tool_call_id: o.toolCallId, content: o.output });
+        this.pushEntry('toolResult', { role: 'tool', content: o.output, toolCallId: o.toolCallId });
         yield { type: 'tool_result', ...o };
       }
     }
 
+    await this.persist();
     yield { type: 'agent_settled', reason: 'max-turns', usage };
   }
 

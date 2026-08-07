@@ -9,13 +9,17 @@ import { ToolRegistry } from '../tool.js';
 import { readTool } from '../tools/read.js';
 
 let tmp: string;
+let home: string;
 
 beforeAll(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'dscode-agent-'));
+  home = path.join(tmp, 'dscode-home');
+  process.env['DSCODE_HOME'] = home; // 持久化落到临时目录，测试互不污染
   await fs.writeFile(path.join(tmp, 'a.txt'), 'hello', 'utf8');
 });
 
 afterAll(async () => {
+  delete process.env['DSCODE_HOME'];
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
@@ -228,5 +232,48 @@ describe('AgentSession（M1-S4）', () => {
     for await (const ev of session.run('继续')) events.push(ev);
     expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
     expect(events.filter((e) => e.type === 'message_update')).toHaveLength(1);
+  });
+
+  it('自动落盘：一轮对话后生成 .jsonl，每行可 parse（SC-2.1）', async () => {
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('你好')]) });
+    for await (const _ of session.run('第一轮')) {
+      // drain
+    }
+    const file = path.join(home, 'sessions', (await import('../session/manager.js')).hashCwd(tmp), `${session.sessionId}.jsonl`);
+    const raw = await fs.readFile(file, 'utf8');
+    const lines = raw.split('\n').filter((l) => l.trim());
+    expect(lines.length).toBeGreaterThanOrEqual(2); // user + assistant
+    for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+  });
+
+  it('resume：同 sessionId 新建 AgentSession 能恢复历史（SC-2.2）', async () => {
+    const first = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('你好')]) });
+    for await (const _ of first.run('记住密码是 s3cr3t')) {
+      // drain
+    }
+    // 用同一 sessionId 恢复
+    const resumed = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('恢复成功')]), sessionId: first.sessionId });
+    await resumed.prepare();
+    // 历史应被加载进 messages（含第一轮的 user/assistant）
+    expect(resumed.messages.map((m) => m.role)).toContain('user');
+    expect(resumed.messages.some((m) => m.role === 'user' && m.content === '记住密码是 s3cr3t')).toBe(true);
+    // 继续一轮后仍可正常收敛
+    const events = [];
+    for await (const ev of resumed.run('继续')) events.push(ev);
+    expect(events.at(-1)?.type).toBe('agent_settled');
+  });
+
+  it('/tree 语义：jumpTo 迁移激活分支，buildContextEntries 跟随（SC-2.3）', async () => {
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('a'), contentTurn('b')]) });
+    for await (const _ of session.run('第一问')) {
+      // drain
+    }
+    const u1 = session.entries.find((e) => e.type === 'user')!;
+    // 跳到第一个 user 节点（模拟 /tree 1）
+    expect(session.jumpTo(u1.id)).toBe(true);
+    // 激活分支从根到 u1，不含后续 assistant
+    expect(session.activeBranch.map((e) => e.id)).toEqual([u1.id]);
+    // 非法节点跳转失败
+    expect(session.jumpTo('nope')).toBe(false);
   });
 });

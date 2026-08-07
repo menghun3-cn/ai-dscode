@@ -207,6 +207,33 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       session.messages.length = 0;
     },
     costText: () => costText(model, usage),
+    // M2：会话操作（/resume /tree /fork /clone /name /export）
+    session: {
+      id: session.sessionId,
+      get activeBranch() {
+        return session.activeBranch;
+      },
+      jumpTo: (entryId) => session.jumpTo(entryId),
+      forkFrom: (entryId) => session.forkFrom(entryId),
+      clone: () => session.clone(),
+      label: (name) => session.label(name),
+      exportMarkdown: async () => {
+        const { promises: fs } = await import('node:fs');
+        const path = await import('node:path');
+        const lines = session.activeBranch.map((e) => {
+          const body = e.content ?? e.name ?? '';
+          return `**${e.type}**\n\n${body}\n\n---\n`;
+        });
+        const md = `# dscode session ${session.sessionId}\n\n${lines.join('\n')}`;
+        const file = path.join(session.cwd, `dscode-session-${session.sessionId.slice(0, 8)}.md`);
+        await fs.writeFile(file, md, 'utf8');
+        return file;
+      },
+      listSessions: async () => {
+        const { SessionManager } = await import('@dscode/core');
+        return new SessionManager(session.cwd).list();
+      },
+    },
   };
 
   const onSigint = () => {
@@ -232,8 +259,8 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       continue;
     }
 
-    // slash 命令
-    const res = handleSlash(input, slashCtx);
+    // slash 命令（M2 会话命令为异步）
+    const res = await handleSlash(input, slashCtx);
     if (res.handled) {
       if (res.output) process.stdout.write(`${res.output}\n`);
       if (res.exitCode !== undefined) {

@@ -1,7 +1,30 @@
 /**
- * slash 命令路由（todos M1-S5）。
+ * slash 命令路由（todos M1-S5 / M2）。
  * 纯函数 + 上下文注入，便于单测。TUI 把命令解析结果映射到实际动作。
+ * M2 新增会话命令：/resume /tree /fork /clone /name /export。
  */
+
+import type { SessionEntry } from '@dscode/core';
+
+/** M2：会话相关操作（由 TUI 用 AgentSession 实现注入） */
+export interface SlashSessionOps {
+  /** 当前 session id */
+  id: string;
+  /** 当前激活分支（从根到末端） */
+  activeBranch: SessionEntry[];
+  /** /tree <n>：跳到历史节点改写分支 */
+  jumpTo(entryId: string): boolean;
+  /** /fork <n>：从历史节点生成新会话文件（旧文件不变） */
+  forkFrom(entryId: string): Promise<string>;
+  /** /clone：复制当前分支到新会话 */
+  clone(): Promise<string>;
+  /** /name <名字>：会话命名（label entry） */
+  label(name: string): Promise<void>;
+  /** /export：导出当前分支为 markdown，返回文件路径 */
+  exportMarkdown(): Promise<string>;
+  /** /resume：列出本目录会话 */
+  listSessions(): Promise<Array<{ id: string; entries: number; mtime: number }>>;
+}
 
 export interface SlashCommandContext {
   /** 当前模型 id */
@@ -14,6 +37,8 @@ export interface SlashCommandContext {
   clearMessages: () => void;
   /** 计费统计文本（/cost，M3 完善） */
   costText: () => string;
+  /** M2：会话操作（/resume /tree /fork /clone /name /export） */
+  session: SlashSessionOps;
 }
 
 export interface SlashResult {
@@ -26,9 +51,9 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
-export function handleSlash(input: string, ctx: SlashCommandContext): SlashResult {
+export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
     return { handled: false };
   }
@@ -50,6 +75,12 @@ export function handleSlash(input: string, ctx: SlashCommandContext): SlashResul
           '  /model   显示可用模型；/model <id|序号> 切换',
           '  /cost    显示本轮 token 与成本统计',
           '  /clear   清空当前会话消息',
+          '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
+          '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
+          '  /clone   复制当前分支为新会话',
+          '  /name <名字>  给当前会话命名',
+          '  /export  导出当前会话为 markdown',
+          '  /resume  列出本目录会话（重启后用 dscode -c/-r 恢复）',
         ].join('\n'),
       };
     case 'model': {
@@ -79,6 +110,56 @@ export function handleSlash(input: string, ctx: SlashCommandContext): SlashResul
     case 'clear':
       ctx.clearMessages();
       return { handled: true, output: '会话已清空' };
+
+    // ---- M2 会话命令 ----
+    case 'tree': {
+      const branch = ctx.session.activeBranch;
+      if (branch.length === 0) return { handled: true, output: '当前会话为空' };
+      if (arg) {
+        const idx = Number(arg) - 1;
+        const entry = branch[idx];
+        if (!entry) return { handled: true, output: `无效节点: ${arg}（/tree 查看列表）` };
+        ctx.session.jumpTo(entry.id);
+        return { handled: true, output: `已跳到节点 #${idx + 1}（${entry.type}）` };
+      }
+      const lines = branch.map((e, i) => {
+        const preview = (e.content ?? e.name ?? '').slice(0, 60).replace(/\n/g, ' ');
+        return `  #${i + 1} [${e.type}] ${preview}`;
+      });
+      return {
+        handled: true,
+        output: `会话树（${ctx.session.id.slice(0, 8)}…，${branch.length} 节点）:\n${lines.join('\n')}\n/tree <n> 跳到该节点；/fork <n> 从该节点分叉`,
+      };
+    }
+    case 'fork': {
+      const idx = Number(arg) - 1;
+      const entry = ctx.session.activeBranch[idx];
+      if (!entry) return { handled: true, output: `无效节点: ${arg}（/tree 查看列表）` };
+      const newId = await ctx.session.forkFrom(entry.id);
+      return { handled: true, output: `已分叉 → 新会话 ${newId.slice(0, 8)}…（旧文件不变）` };
+    }
+    case 'clone': {
+      const newId = await ctx.session.clone();
+      return { handled: true, output: `已复制当前分支 → 新会话 ${newId.slice(0, 8)}…（原会话不动）` };
+    }
+    case 'name': {
+      if (!arg) return { handled: true, output: `用法: /name <会话名>` };
+      await ctx.session.label(arg);
+      return { handled: true, output: `已命名会话: ${arg}` };
+    }
+    case 'export': {
+      const file = await ctx.session.exportMarkdown();
+      return { handled: true, output: `已导出: ${file}` };
+    }
+    case 'resume': {
+      const list = await ctx.session.listSessions();
+      if (list.length === 0) return { handled: true, output: '本目录暂无会话' };
+      const lines = list.map((m, i) => `  ${i + 1}. ${m.id.slice(0, 8)}…（${m.entries} 条，${new Date(m.mtime).toLocaleString()}）`);
+      return {
+        handled: true,
+        output: `本目录会话（${list.length} 个）:\n${lines.join('\n')}\n重启后用 dscode -c 续最近 / dscode -r 选择恢复`,
+      };
+    }
     default:
       return { handled: true, output: `未知命令: /${cmd}（/help 查看可用命令）` };
   }

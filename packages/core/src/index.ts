@@ -19,5 +19,8 @@ export * from './agent/events.js';
 export * from './agent/prompt.js';
 export * from './agent/session.js';
 export * from './agent/runtime.js';
+export * from './session/entries.js';
+export * from './session/manager.js';
+export * from './session/context.js';
 
 export const CORE_PACKAGE_VERSION = '0.1.1';
