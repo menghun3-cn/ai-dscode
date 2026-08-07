@@ -32,4 +32,4 @@ export * from './skill/skill.js';
 export * from './permission/permission.js';
 export * from './plan/plan.js';
 
-export const CORE_PACKAGE_VERSION = '0.4.0';
+export const CORE_PACKAGE_VERSION = '0.5.0';
