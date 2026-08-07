@@ -10,11 +10,13 @@ import { saveAuthKey } from '@dscode/ai';
 import type { CliArgs, CliMode } from './args.js';
 import { buildSession } from './build-session.js';
 import { runPrint } from './print.js';
+import { runJson } from './json.js';
 import { runInteractive } from './tui.js';
 import { runRpc } from './rpc.js';
 
-/** 判定实际模式：-p 即 print；否则取 --mode，默认 interactive */
+/** 判定实际模式：显式非默认 --mode 优先（如 `-p "x" --mode json`，SC-6.3）；否则 -p 即 print；默认 interactive */
 export function resolveMode(args: CliArgs): CliMode {
+  if (args.mode && args.mode !== 'interactive') return args.mode;
   if (args.printPrompt !== undefined) return 'print';
   return args.mode ?? 'interactive';
 }
@@ -42,12 +44,6 @@ export async function firstRunPromptAndSave(): Promise<string | undefined> {
 export async function dispatch(args: CliArgs): Promise<number> {
   const mode = resolveMode(args);
 
-  // json 占位（v1.0 落地），先保证分支命中（日志可见 mode）
-  if (mode === 'json') {
-    console.error('[dscode] json 模式将在 v1.0 落地（当前为占位分支）');
-    return 0;
-  }
-
   const { session, extManager, authError } = await buildSession(args);
   if (authError || !session) {
     // interactive 模式：SC-1.1 首次运行引导输入 key；print 模式直接报错（CI 不弹交互）
@@ -72,6 +68,9 @@ export async function dispatch(args: CliArgs): Promise<number> {
 
   if (mode === 'print') {
     return runPrint(session, args.printPrompt, args.positionals);
+  }
+  if (mode === 'json') {
+    return runJson(session, args.printPrompt, args.positionals); // 每行 {type,data} 事件流（todos M7-S3）
   }
   if (mode === 'rpc') {
     return runRpc(session); // JSON-RPC over stdio（todos M7）

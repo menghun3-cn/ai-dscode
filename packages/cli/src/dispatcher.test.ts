@@ -22,4 +22,8 @@ describe('resolveMode（todos M1-S5 验收：四分支命中正确）', () => {
   it('--mode print 且无 -p 也进 print', () => {
     expect(resolveMode(parseArgs(['--mode', 'print']))).toBe('print');
   });
+
+  it('-p 配显式 --mode json 进 json（SC-6.3：-p "x" --mode json）', () => {
+    expect(resolveMode(parseArgs(['-p', '审查代码', '--mode', 'json']))).toBe('json');
+  });
 });
