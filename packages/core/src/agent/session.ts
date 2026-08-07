@@ -366,15 +366,21 @@ export class AgentSession {
     yield { type: 'agent_settled', reason: 'max-turns', usage };
   }
 
-  /** 权限检查（M5，SC-4.3）：bash 危险命令需二次确认；放行返回 null，拦截返回原因 */
+  /** 权限检查（M5，SC-4.3）：bash 危险命令二次确认；写工具按审批模式分派（M5-S5）；放行返回 null，拦截返回原因 */
   private async checkPermission(toolName: string, params: Record<string, unknown>): Promise<string | null> {
+    const writeTool = WRITE_TOOLS.has(toolName);
     if (toolName === 'bash') {
       const command = String(params['command'] ?? '');
       const danger = isDangerousCommand(command);
       if (danger) {
-        const verdict = await this.permission.check(`bash:${command}`, { dangerousReason: danger });
+        const verdict = await this.permission.check(`bash:${command}`, { dangerousReason: danger, writeTool });
         if (!verdict.allow) return verdict.reason ?? '危险操作被拒绝';
       }
+      return null;
+    }
+    if (writeTool) {
+      const verdict = await this.permission.check(`${toolName}:${JSON.stringify(params)}`, { writeTool });
+      if (!verdict.allow) return verdict.reason ?? '写操作被拒绝';
     }
     return null;
   }

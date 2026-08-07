@@ -74,3 +74,40 @@ describe('PermissionEngine.check（SC-4.3 二次确认 + 白名单）', () => {
     expect((await fresh.check('bash:ls -la')).allow).toBe(true); // 上个用例写入的 allow 保留
   });
 });
+
+describe('审批模式分级（M5-S5：read-only/ask/auto-edit/full-auto）', () => {
+  const WRITE = 'write:{"path":"a.txt"}';
+
+  it('read-only：写工具与危险命令都拒绝（无确认）', async () => {
+    const eng = new PermissionEngine({ mode: 'read-only', confirm: async () => true });
+    expect((await eng.check(WRITE, { writeTool: true })).allow).toBe(false);
+    expect((await eng.check('bash:rm -rf x', { dangerousReason: 'rm -rf' })).allow).toBe(false);
+    // 普通操作放行
+    expect((await eng.check('read:a.txt')).allow).toBe(true);
+  });
+
+  it('ask：写工具无回调放行（普通编辑）、有回调需确认；危险命令无回调拒绝', async () => {
+    const engNo = new PermissionEngine({ mode: 'ask' }); // 无回调
+    // 普通编辑：无交互时放行（print/CI 仍可改文件）
+    expect((await engNo.check(WRITE, { writeTool: true })).allow).toBe(true);
+    // 危险命令：无回调默认拒绝
+    expect((await engNo.check('bash:rm -rf x', { dangerousReason: 'rm -rf' })).allow).toBe(false);
+    // 有回调且拒绝 → 写操作被拒
+    const engNo2 = new PermissionEngine({ mode: 'ask', confirm: async () => false });
+    expect((await engNo2.check(WRITE, { writeTool: true })).allow).toBe(false);
+  });
+
+  it('auto-edit：文件编辑不弹框，bash 危险命令仍确认（M5-S5 验收）', async () => {
+    const eng = new PermissionEngine({ mode: 'auto-edit', confirm: async () => false });
+    // 写工具直接放行（即使 confirm 返回 false 也不问）
+    expect((await eng.check(WRITE, { writeTool: true })).allow).toBe(true);
+    // 危险命令仍走确认 → confirm=false 拒绝
+    expect((await eng.check('bash:rm -rf x', { dangerousReason: 'rm -rf' })).allow).toBe(false);
+  });
+
+  it('full-auto：写工具与危险命令全放行', async () => {
+    const eng = new PermissionEngine({ mode: 'full-auto', confirm: async () => false });
+    expect((await eng.check(WRITE, { writeTool: true })).allow).toBe(true);
+    expect((await eng.check('bash:rm -rf x', { dangerousReason: 'rm -rf' })).allow).toBe(true);
+  });
+});

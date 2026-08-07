@@ -15,6 +15,8 @@ export interface CliArgs {
   provider: string;
   model: string;
   apiKey?: string;
+  /** M5-S5：审批模式（read-only/ask/auto-edit/full-auto，默认 ask） */
+  approval: 'read-only' | 'ask' | 'auto-edit' | 'full-auto';
   /** -c 继续会话（M2 落地，先解析） */
   cont: boolean;
   /** -r 浏览会话（M2 落地，先解析） */
@@ -37,6 +39,8 @@ export function parseArgs(argv: string[]): CliArgs {
       provider: { type: 'string' },
       model: { type: 'string' },
       'api-key': { type: 'string' },
+      approval: { type: 'string' },
+      'auto-edit': { type: 'boolean' },
       continue: { type: 'boolean', short: 'c' },
       resume: { type: 'boolean', short: 'r' },
       help: { type: 'boolean', short: 'h' },
@@ -51,6 +55,13 @@ export function parseArgs(argv: string[]): CliArgs {
     throw new Error(`无效 --mode: ${mode}（可选 interactive/print/json/rpc）`);
   }
 
+  // 审批模式：--approval 显式指定 > --auto-edit 快捷 flag > 默认 ask
+  const approvalRaw = values['approval'] as string | undefined;
+  const approval = (approvalRaw ?? (values['auto-edit'] === true ? 'auto-edit' : undefined)) as CliArgs['approval'] | undefined;
+  if (approval && !['read-only', 'ask', 'auto-edit', 'full-auto'].includes(approval)) {
+    throw new Error(`无效 --approval: ${approval}（可选 read-only/ask/auto-edit/full-auto）`);
+  }
+
   return {
     printPrompt: typeof values['print'] === 'string' ? values['print'] : undefined,
     mode,
@@ -58,6 +69,7 @@ export function parseArgs(argv: string[]): CliArgs {
     // --model > DSCODE_MODEL env > 默认 deepseek-v4-flash
     model: (values['model'] as string | undefined) ?? process.env['DSCODE_MODEL'] ?? 'deepseek-v4-flash',
     apiKey: values['api-key'] as string | undefined,
+    approval: approval ?? 'ask',
     cont: values['continue'] === true,
     resume: values['resume'] === true,
     help: values['help'] === true,
@@ -80,6 +92,8 @@ export const HELP_TEXT = `dscode — DeepSeek 优先的命令行 AI 编码助手
       --provider <id>      模型提供商（默认 deepseek）
       --model <id>         模型 id（默认 deepseek-v4-flash，可用 DSCODE_MODEL 覆盖）
       --api-key <key>      显式 API key（优先级最高）
+      --approval <模式>     审批模式 read-only/ask/auto-edit/full-auto（默认 ask，M5-S5）
+      --auto-edit          等价 --approval auto-edit（文件编辑不弹框，bash 危险命令仍确认）
   -c, --continue           继续最近会话（v0.2 落地）
   -r, --resume             浏览会话（v0.2 落地）
   -v, --version            显示版本号

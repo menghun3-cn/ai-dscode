@@ -69,23 +69,28 @@ export interface PermissionVerdict {
   confirm?: boolean;
 }
 
+/** 审批模式分级（todos M5-S5）：read-only / ask / auto-edit / full-auto */
+export type ApprovalMode = 'read-only' | 'ask' | 'auto-edit' | 'full-auto';
+
 export interface PermissionEngineOptions {
-  /** 二次确认回调（CLI/TUI 注入）；无则默认拒绝 */
+  /** 二次确认回调（CLI/TUI 注入）；ask/auto-edit 的危险命令无回调时默认拒绝 */
   confirm?: (message: string) => Promise<boolean>;
-  /** full-auto 模式：跳过二次确认（仅受 allow 列表约束） */
+  /** 审批模式（默认 ask）：read-only 拒写 / ask 逐项确认 / auto-edit 编辑放行+危险确认 / full-auto 全放行 */
+  mode?: ApprovalMode;
+  /** 兼容旧字段：autoApprove=true 等价 mode='full-auto' */
   autoApprove?: boolean;
   env?: Record<string, string | undefined>;
 }
 
 export class PermissionEngine {
   private readonly confirm?: (message: string) => Promise<boolean>;
-  private readonly autoApprove: boolean;
+  private readonly mode: ApprovalMode;
   private readonly env: Record<string, string | undefined>;
   private rules?: PermissionRules;
 
   constructor(opts: PermissionEngineOptions = {}) {
     this.confirm = opts.confirm;
-    this.autoApprove = opts.autoApprove ?? false;
+    this.mode = opts.autoApprove ? 'full-auto' : (opts.mode ?? 'ask');
     this.env = opts.env ?? process.env;
   }
 
@@ -94,11 +99,21 @@ export class PermissionEngine {
     return this.rules;
   }
 
+  /** 危险操作确认（ask/auto-edit 模式） */
+  private async confirmDanger(subject: string, dangerousReason: string): Promise<PermissionVerdict> {
+    if (this.mode === 'full-auto') return { allow: true };
+    if (!this.confirm) return { allow: false, reason: `危险操作需要确认: ${dangerousReason}（${subject}）` };
+    const ok = await this.confirm(`⚠️ 危险操作确认：${dangerousReason}\n  命令: ${subject}\n  确认执行？(y/N)`);
+    return ok ? { allow: true } : { allow: false, reason: `已拒绝危险操作: ${subject}` };
+  }
+
   /**
    * 检查操作是否放行。
    * @param subject 操作标识（如 `bash:rm -rf node_modules`，`write:.env`）
+   * @param opts.dangerousReason 危险原因（危险命令命中时）
+   * @param opts.writeTool 是否为写工具（write/edit 等，read-only/auto-edit 模式判断用）
    */
-  async check(subject: string, opts: { dangerousReason?: string } = {}): Promise<PermissionVerdict> {
+  async check(subject: string, opts: { dangerousReason?: string; writeTool?: boolean } = {}): Promise<PermissionVerdict> {
     const rules = await this.getRules();
     // 显式拒绝优先
     if (rules.deny.some((r) => subject.startsWith(r))) {
@@ -108,12 +123,19 @@ export class PermissionEngine {
     if (rules.allow.some((r) => subject.startsWith(r))) {
       return { allow: true };
     }
-    // 危险操作：需要二次确认（除 full-auto + allow）
-    if (opts.dangerousReason) {
-      if (this.autoApprove) return { allow: true }; // full-auto
-      if (!this.confirm) return { allow: false, reason: `危险操作需要确认: ${opts.dangerousReason}（${subject}）` };
-      const ok = await this.confirm(`⚠️ 危险操作确认：${opts.dangerousReason}\n  命令: ${subject}\n  确认执行？(y/N)`);
-      return ok ? { allow: true } : { allow: false, reason: `已拒绝危险操作: ${subject}` };
+    // read-only：写工具与危险操作一律拒绝（无确认）
+    if (this.mode === 'read-only') {
+      if (opts.writeTool) return { allow: false, reason: `read-only 模式禁止写操作: ${subject}` };
+      if (opts.dangerousReason) return { allow: false, reason: `read-only 模式拒绝危险操作: ${opts.dangerousReason}` };
+      return { allow: true };
+    }
+    // 危险操作：ask/auto-edit 需确认，full-auto 跳过
+    if (opts.dangerousReason) return this.confirmDanger(subject, opts.dangerousReason);
+    // 写工具：auto-edit 编辑不弹框；ask 有确认回调则确认（无回调放行——普通编辑风险低）
+    if (opts.writeTool && this.mode === 'ask') {
+      if (!this.confirm) return { allow: true };
+      const ok = await this.confirm(`确认执行写操作？\n  ${subject}\n  (y/N)`);
+      return ok ? { allow: true } : { allow: false, reason: `已拒绝写操作: ${subject}` };
     }
     return { allow: true };
   }

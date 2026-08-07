@@ -135,8 +135,9 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
   });
   await extManager.loadAll();
 
-  // M5：权限引擎（危险命令二次确认；非 TTY 无交互时默认拒绝）
+  // M5/M5-S5：权限引擎（审批模式分级 + 危险命令二次确认；非 TTY 无交互时默认拒绝）
   const permission = new PermissionEngine({
+    mode: args.approval,
     confirm: async (message) => {
       if (!process.stdin.isTTY) return false;
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
