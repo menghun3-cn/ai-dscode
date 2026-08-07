@@ -358,6 +358,51 @@
 
 ---
 
+## Milestone 8：分发与发布（v1.0）✅ 2026-08-08 落地
+
+> 完成项从 todos-list.md 迁入（M8-S1~S6）。SC-6.1/6.2 实测通过；SC-6.4 跨平台实测待 GitHub Actions 补验（M8-S7 后置）。
+
+### M8-S1 npm 全局包发布配置（SC-6.1）
+- **完成时间**：2026-08-08
+- **内容**：根 package.json 加 `bin: { dscode: "./dist/dscode-cli.js" }`、`files`、`prepublishOnly`（发布前构建）+ `bundle:cli`（bun 单文件 bundle）。
+- **证据**：`npm pack` → `npm i -g` tarball → `dscode --version` 输出 `0.7.0`（registry 正式发布需 npm 账号授权）。
+- **对应**：SC-6.1
+
+### M8-S2 Bun 编译单二进制（SC-6.2）
+- **完成时间**：2026-08-08
+- **内容**：`build:binary`（`bun build --compile`）；CI/Release workflow 内置三平台编译。
+- **证据**：`dist/dscode.exe`（Windows 327 模块）`--version` 正常。
+- **对应**：SC-6.2
+
+### M8-S3 curl 安装脚本
+- **完成时间**：2026-08-08
+- **内容**：`scripts/install.sh`——检测平台（Linux/macOS）→ 从 GitHub Releases 下载对应二进制（`dscode-linux-x64` / `dscode-macos`）→ 装到 `~/.dscode/bin`（`DCSCODE_INSTALL_DIR` 可覆盖）→ PATH 提示 + `--version` 校验；`curl ... | sh` 一键安装。
+- **证据**：`bash -n` 语法检查通过；Windows 不支持在脚本内明示（提示下载 exe）。
+- **对应**：todos M8 P1（`curl ... | sh` 装好）
+
+### M8-S4 跨平台回归矩阵 CI（SC-6.4，workflow 就绪）
+- **完成时间**：2026-08-08
+- **内容**：`.github/workflows/ci.yml`——win/macOS/Linux 三平台矩阵：Node 22 + pnpm + Bun → install → build → test（SC-1.3~1.7）→ build:binary → 验证二进制 → 上传产物；`.github/workflows/release.yml`——tag `v*` 推送 → 三平台编译 → GitHub Release 附二进制（`dscode-linux-x64`/`dscode-macos`/`dscode-windows-x64.exe`）。
+- **证据**：workflow 结构静态检查；**真实跑通待 GitHub Actions**（M8-S7 后置）。
+- **对应**：SC-6.4
+
+### M8-S5 完整中文文档 + 英文 README
+- **完成时间**：2026-08-08
+- **内容**：README.md 状态更新（v0.7，M1~M7 关闭）+ 三方式安装指引（npm / 二进制 / 源码）；新增 README.en.md（英文版：定位/状态/文档/安装/使用/License/致谢）。
+- **证据**：README.en.md 存在且章节完整；README.md 安装节含 curl 一键安装。
+- **对应**：todos M8 P1
+
+### M8-S6 许可证与致谢（P0）
+- **完成时间**：2026-08-08
+- **内容**：`LICENSE`（MIT，Copyright (c) 2026 menghun3-cn）；README 致谢节——注明借鉴 pi / Claude Code / Codex CLI / Cursor / OpenCode / MCP 的设计理念，明确**独立自主实现、非逐行抄写**声明（对齐风险登记要求）。
+- **证据**：LICENSE 存在；README 致谢节可读。
+- **对应**：todos M8 P0
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **凭据守卫拦截**：PowerShell 实测时把 API key 写进 `-Command` 字符串参数被凭据守卫拦截——key 应走环境变量前缀，不经 shell 参数（SC-6.4 Windows 实测的教训）。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）
