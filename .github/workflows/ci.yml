@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test（SC-1.3~1.7 跨平台回归，SC-6.4）
+        run: pnpm test
+
+      - name: Build binary（SC-6.2 单二进制）
+        run: pnpm build:binary
+
+      - name: Verify binary
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ./dist/dscode.exe --version
+          else
+            ./dist/dscode --version
+          fi
+        shell: bash
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dscode-${{ matrix.os }}
+          path: |
+            dist/dscode
+            dist/dscode.exe
+          if-no-files-found: error

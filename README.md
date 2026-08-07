@@ -3,7 +3,7 @@
 > 对接 DeepSeek 优先、兼容多模型的命令行 AI 编码助手（AI IDE CLI）。
 > DeepSeek-first, multi-provider AI coding assistant for the terminal.
 
-**当前状态：MVP（v0.1）已完成并通过验收（SC-1.1~1.10 全 PASS）。** 代码为 pnpm monorepo 三包（`@dscode/core` / `@dscode/ai` / `@dscode/cli`），配套 `docs/` 全量设计文档。
+**当前状态：v0.7（M1~M7 全部关闭：MVP / Session / 多 Provider / 扩展系统 / 权限与 Plan / Compaction / MCP 与 RPC；SC-6.1/6.2/6.3 实测通过）。** 代码为 pnpm monorepo 三包（`@dscode/core` / `@dscode/ai` / `@dscode/cli`），配套 `docs/` 全量设计文档。
 
 ## 定位
 
@@ -25,23 +25,37 @@
 
 ## 安装
 
-**方式一：单二进制（推荐，免 Node 环境）**
-
-下载对应平台的 `dscode` 二进制（或本地 `pnpm build:binary` 自行编译），放入 PATH 即可：
+**方式一：npm 全局安装（SC-6.1，发布后可用）**
 
 ```bash
-# Windows（dist/dscode.exe）
-./dist/dscode.exe --version
+npm i -g dscode
+dscode --version   # 输出版本号即安装成功
+```
+
+**方式二：单二进制（推荐，免 Node 环境）**
+
+从 [GitHub Releases](https://github.com/menghun3-cn/ai-dscode/releases) 下载对应平台二进制（`dscode-linux-x64` / `dscode-macos` / `dscode-windows-x64.exe`），放入 PATH 即可：
+
+```bash
+# Windows
+dscode.exe --version
 # Linux / macOS
 ./dscode --version
 ```
 
-**方式二：源码运行（Node 22+）**
+也可本地自行编译（需 Bun）：
+
+```bash
+pnpm install
+pnpm build:binary   # 产出 dist/dscode.exe（Windows）或 dist/dscode（Linux/macOS）
+```
+
+**方式三：源码运行（Node 22+）**
 
 ```bash
 pnpm install
 pnpm -r build
-pnpm exec --filter @dscode/cli ...   # 或直接 node packages/cli/dist/index.js
+node packages/cli/dist/index.js   # 或 pnpm exec --filter @dscode/cli …
 ```
 
 ## 使用

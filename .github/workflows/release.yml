@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: dscode-linux-x64
+          - os: macos-latest
+            asset: dscode-macos
+          - os: windows-latest
+            asset: dscode-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + Test
+        run: |
+          pnpm -r build
+          pnpm test
+
+      - name: Compile single binary（SC-6.2）
+        run: pnpm build:binary
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/dscode.exe dist/${{ matrix.asset }}
+          else
+            cp dist/dscode dist/${{ matrix.asset }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release（附三平台二进制）
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/dscode-*
+          generate_release_notes: true
