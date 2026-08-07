@@ -3,12 +3,19 @@ import { costText, fmtTokens, fmtDuration, statusText, type UsageStats } from '.
 
 const usage: UsageStats = { promptTokens: 1_000_000, completionTokens: 1_000_000, cacheReadTokens: 1_000_000, cost: 0 };
 
-describe('costText（/cost，M3 完善前的估算）', () => {
+describe('costText（/cost，M3 全 provider 计费 SC-3.3）', () => {
   it('deepseek-chat 成本换算', () => {
     // 1M input×0.27 + 1M output×1.1 + 1M cache×0.07 = 1.44
     const t = costText('deepseek-chat', usage);
     expect(t).toContain('deepseek-chat');
     expect(t).toContain('$1.4400');
+  });
+
+  it('openai gpt-4o 成本换算（跨 provider 目录取价）', () => {
+    // 1M input×2.5 + 1M output×10 + 1M cache×1.25 = 13.75
+    const t = costText('gpt-4o', usage);
+    expect(t).toContain('gpt-4o');
+    expect(t).toContain('$13.7500');
   });
 
   it('未知模型成本按 0 计', () => {

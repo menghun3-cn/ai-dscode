@@ -8,10 +8,10 @@
 import readline, { type Key } from 'node:readline';
 import process from 'node:process';
 import type { AgentEvent, AgentSession } from '@dscode/core';
-import { deepseekModels } from '@dscode/ai';
 import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { truncateByWidth } from './width.js';
+import { PROVIDERS } from './build-session.js';
 
 export interface UsageStats {
   promptTokens: number;
@@ -20,10 +20,19 @@ export interface UsageStats {
   cost: number;
 }
 
-const MODEL_COST: Record<string, { input: number; output: number; cacheRead: number }> = {
-  'deepseek-chat': { input: 0.27, output: 1.1, cacheRead: 0.07 },
-  'deepseek-reasoner': { input: 0.55, output: 2.19, cacheRead: 0.14 },
-};
+/** 模型单价（每百万 token USD）：从全部 provider 模型目录取（M3，SC-3.3） */
+export interface Price {
+  input: number;
+  output: number;
+  cacheRead: number;
+}
+
+const MODEL_COST: Record<string, Price> = Object.fromEntries(
+  PROVIDERS.flatMap((p) => p.models).map((m) => [m.id, { input: m.cost.input, output: m.cost.output, cacheRead: m.cost.cacheRead }]),
+);
+
+/** reasoning 展示模式（/thinking 切换，SC-3.2）：stream=流式灰色 / fold=折叠一行 / off=隐藏 */
+let thinkingMode: 'stream' | 'fold' | 'off' = 'stream';
 
 /** 渲染一个 agent 事件到 stdout（纯文本滚动） */
 export function renderEvent(ev: AgentEvent): void {
@@ -32,6 +41,11 @@ export function renderEvent(ev: AgentEvent): void {
       process.stdout.write(ev.content);
       break;
     case 'reasoning_update':
+      if (thinkingMode === 'off') break;
+      if (thinkingMode === 'fold') {
+        process.stdout.write('\x1b[90m[思考中…]\x1b[0m');
+        break;
+      }
       process.stdout.write(`\x1b[90m${ev.content}\x1b[0m`); // 灰色展示思考过程
       break;
     case 'tool_call':
@@ -88,7 +102,9 @@ export function statusText(opts: { model: string; cwd: string; usedTokens: numbe
 }
 
 export async function runInteractive(session: AgentSession): Promise<number> {
-  const availableModels = deepseekModels.map((m) => m.id);
+  // M3：全部 provider 的模型（跨 provider 统一编号，/model 与 Ctrl+P 用）
+  const availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
+  const allModelDefs = PROVIDERS.flatMap((p) => p.models);
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -102,7 +118,7 @@ export async function runInteractive(session: AgentSession): Promise<number> {
   const usage: UsageStats = { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cost: 0 };
 
   const contextWindowOf = (modelId: string): number =>
-    deepseekModels.find((m) => m.id === modelId)?.contextWindow ?? 65536;
+    allModelDefs.find((m) => m.id === modelId)?.contextWindow ?? 65536;
 
   // 底部状态栏：保存光标 → 移到末行 → 清行 → 写状态 → 恢复光标
   const drawStatusBar = () => {
@@ -164,6 +180,18 @@ export async function runInteractive(session: AgentSession): Promise<number> {
   const rlAny = rl as unknown as { _ttyWrite: (s: string, key: Key) => void };
   const origTtyWrite = rlAny._ttyWrite.bind(rl);
   rlAny._ttyWrite = (s: string, key: Key) => {
+    // Ctrl+P：循环切换模型（M3，SC-3.1）
+    if (key.ctrl && key.name === 'p') {
+      const idx = availableModels.indexOf(model);
+      const next = availableModels[(idx + 1) % availableModels.length] ?? model;
+      if (next !== model) {
+        model = next;
+        session.setModel(next);
+        process.stdout.write(`\n已切换模型: ${next}\n`);
+      }
+      refresh();
+      return;
+    }
     if (menu) {
       if (key.name === 'up') {
         menu.index = cycleMenuIndex(menu.index, -1, menu.candidates.length);
@@ -207,6 +235,12 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       session.messages.length = 0;
     },
     costText: () => costText(model, usage),
+    get thinkingMode() {
+      return thinkingMode;
+    },
+    setThinkingMode: (mode) => {
+      thinkingMode = mode;
+    },
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
       id: session.sessionId,

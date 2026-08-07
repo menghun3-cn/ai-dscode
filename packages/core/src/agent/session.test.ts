@@ -276,4 +276,37 @@ describe('AgentSession（M1-S4）', () => {
     // 非法节点跳转失败
     expect(session.jumpTo('nope')).toBe(false);
   });
+
+  it('跨 provider 切换：setModel 经 clientFactory 换 client（M3，SC-3.1）', async () => {
+    const openaiClient: ChatStreamer = {
+      async *streamChat() {
+        yield { content: 'GPT 回答', finishReason: 'stop' };
+      },
+    };
+    const deepseekClient: ChatStreamer = {
+      async *streamChat() {
+        yield { content: 'DeepSeek 回答', finishReason: 'stop' };
+      },
+    };
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: deepseekClient,
+      // 模型属 openai 时返回 openai client，否则保持 deepseek
+      clientFactory: (modelId) => (modelId.startsWith('gpt-') ? openaiClient : undefined),
+    });
+    // 默认 deepseek client
+    let content = '';
+    for await (const ev of session.run('q1')) {
+      if (ev.type === 'message_update') content += ev.content;
+    }
+    expect(content).toBe('DeepSeek 回答');
+    // 切到 gpt-4o（跨 provider）→ 换 client
+    session.setModel('gpt-4o');
+    content = '';
+    for await (const ev of session.run('q2')) {
+      if (ev.type === 'message_update') content += ev.content;
+    }
+    expect(content).toBe('GPT 回答');
+  });
 });

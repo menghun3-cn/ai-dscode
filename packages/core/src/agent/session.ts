@@ -29,6 +29,8 @@ export interface AgentSessionOptions {
   cwd: string;
   tools: ToolRegistry;
   client: ChatStreamer;
+  /** M3：按模型切换 client（跨 provider 时换协议 client；无则仅切 model id） */
+  clientFactory?: (modelId: string) => ChatStreamer | undefined;
   model?: string;
   maxTurns?: number;
   systemPromptExtra?: string;
@@ -58,7 +60,8 @@ export class AgentSession {
   private readonly sessionManager: SessionManager;
   private readonly persistEnabled: boolean;
   private readonly tools: ToolRegistry;
-  private readonly client: ChatStreamer;
+  private client: ChatStreamer;
+  private readonly clientFactory?: (modelId: string) => ChatStreamer | undefined;
   private modelId: string;
   private readonly maxTurns: number;
   private readonly systemPromptExtra?: string;
@@ -71,7 +74,8 @@ export class AgentSession {
     this.cwd = opts.cwd;
     this.tools = opts.tools;
     this.client = opts.client;
-    this.modelId = opts.model ?? 'deepseek-chat';
+    this.clientFactory = opts.clientFactory;
+    this.modelId = opts.model ?? 'deepseek-v4-flash';
     this.maxTurns = opts.maxTurns ?? 50;
     this.systemPromptExtra = opts.systemPromptExtra;
     this.debug = opts.debug ?? process.env.DSCODE_DEBUG === '1';
@@ -91,6 +95,11 @@ export class AgentSession {
 
   setModel(id: string): void {
     this.modelId = id;
+    // M3：跨 provider 切换时经 factory 重建协议 client
+    if (this.clientFactory) {
+      const next = this.clientFactory(id);
+      if (next) this.client = next;
+    }
   }
 
   get signal(): AbortSignal {

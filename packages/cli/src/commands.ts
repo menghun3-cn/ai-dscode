@@ -37,6 +37,9 @@ export interface SlashCommandContext {
   clearMessages: () => void;
   /** 计费统计文本（/cost，M3 完善） */
   costText: () => string;
+  /** reasoning 展示模式（/thinking 切换，SC-3.2） */
+  thinkingMode: 'stream' | 'fold' | 'off';
+  setThinkingMode: (mode: 'stream' | 'fold' | 'off') => void;
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -51,7 +54,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -75,6 +78,7 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /model   显示可用模型；/model <id|序号> 切换',
           '  /cost    显示本轮 token 与成本统计',
           '  /clear   清空当前会话消息',
+          '  /thinking   reasoning 展示：stream/fold/off（SC-3.2）',
           '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
@@ -110,6 +114,16 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
     case 'clear':
       ctx.clearMessages();
       return { handled: true, output: '会话已清空' };
+    case 'thinking': {
+      if (arg && ['stream', 'fold', 'off'].includes(arg)) {
+        ctx.setThinkingMode(arg as 'stream' | 'fold' | 'off');
+        return { handled: true, output: `reasoning 展示: ${arg}` };
+      }
+      return {
+        handled: true,
+        output: `当前 reasoning 展示: ${ctx.thinkingMode}\n用法: /thinking stream|fold|off（stream=流式灰色，fold=折叠一行，off=隐藏）`,
+      };
+    }
 
     // ---- M2 会话命令 ----
     case 'tree': {

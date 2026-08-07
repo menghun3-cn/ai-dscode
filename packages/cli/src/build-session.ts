@@ -1,19 +1,53 @@
 /**
- * 会话装配：把 args + provider + tools 组装成一个 AgentSession。
+ * 会话装配：把 args + providers + tools 组装成一个 AgentSession。
  * 供各模式（print/interactive）复用（架构文档 §4.2.1）。
- * M2：-c 续最近会话，-r 浏览并选择恢复（SessionManager，见 原理-session.md §3）。
+ * M2：-c 续最近会话，-r 浏览并选择恢复。
+ * M3：多 provider——按 --provider 选初始 provider，clientFactory 支持 /model 跨 provider 热切换。
  */
 
 import process from 'node:process';
 import readline from 'node:readline/promises';
-import { OpenAIClient, resolveApiKey, resolveBaseUrl } from '@dscode/ai';
-import { AgentSessionRuntime, SessionManager, createBuiltinRegistry, type AgentSession } from '@dscode/core';
+import {
+  createDefaultProviders,
+  createClientFor,
+  resolveApiKey,
+  resolveBaseUrl,
+  resolveProviderApiKey,
+  type Provider,
+} from '@dscode/ai';
+import { AgentSessionRuntime, SessionManager, createBuiltinRegistry, type AgentSession, type ChatStreamer } from '@dscode/core';
 import type { CliArgs } from './args.js';
 
 export interface BuildSessionResult {
   session: AgentSession;
   /** 无可用 key 时的错误提示（SC-1.1：无配置时引导输入） */
   authError?: string;
+}
+
+/** 全部可用 provider（DeepSeek 优先） */
+export const PROVIDERS = createDefaultProviders();
+
+/** 按 id 找 provider；找不到回退第一个 */
+export function findProvider(id: string): Provider {
+  return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]!;
+}
+
+/** 按模型 id 找所属 provider（/model 跨 provider 切换用）；找不到回退第一个 */
+export function findProviderForModel(modelId: string): Provider {
+  return PROVIDERS.find((p) => p.models.some((m) => m.id === modelId)) ?? PROVIDERS[0]!;
+}
+
+/** 解析某 provider 的 key：--api-key > auth.json 对应条目 > ${PROVIDER}_API_KEY（deepseek 走原有逻辑） */
+async function resolveKeyFor(provider: Provider, cliApiKey?: string): Promise<string | undefined> {
+  if (cliApiKey) return cliApiKey;
+  if (provider.id === 'deepseek') return (await resolveApiKey())?.key;
+  return resolveProviderApiKey(provider.id);
+}
+
+/** 按 provider 建 client；deepseek 尊重 DSCODE_BASE_URL / DSAPI_BASE_URL 覆盖 */
+function clientFor(provider: Provider, apiKey: string): ChatStreamer {
+  const effective = provider.id === 'deepseek' ? { ...provider, baseUrl: resolveBaseUrl() } : provider;
+  return createClientFor(effective, apiKey) as ChatStreamer;
 }
 
 /** 按 args 解析要恢复的 sessionId：-c 最近 / -r 列表选择；无则 undefined（新建） */
@@ -45,25 +79,39 @@ export async function resolveSessionId(args: CliArgs): Promise<string | undefine
 
 /** 装配会话；鉴权失败时返回 authError 而非抛异常（由模式决定如何引导） */
 export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
-  const resolved = await resolveApiKey({ cliApiKey: args.apiKey });
-  if (!resolved?.key) {
+  const initialProvider = findProvider(args.provider);
+  const initialKey = await resolveKeyFor(initialProvider, args.apiKey);
+  if (!initialKey) {
+    const hint =
+      initialProvider.id === 'deepseek'
+        ? '请用 --api-key 指定，或运行 dscode 交互模式首次引导，或设置 DSCODE_API_KEY 环境变量。'
+        : `请设置 ${initialProvider.id.toUpperCase()}_API_KEY 环境变量（或 --api-key）。`;
     return {
       session: null as unknown as AgentSession,
-      authError: '未找到 DeepSeek API key。请用 --api-key 指定，或运行 dscode 交互模式首次引导，或设置 DSCODE_API_KEY 环境变量。',
+      authError: `未找到 ${initialProvider.id} 的 API key。${hint}`,
     };
   }
 
-  const client = new OpenAIClient({
-    baseUrl: resolveBaseUrl(),
-    apiKey: resolved.key,
-  });
+  // 预解析全部 provider 的 key，供 clientFactory 跨 provider 热切换
+  const keys = new Map<string, string>();
+  for (const p of PROVIDERS) {
+    const k = await resolveKeyFor(p, args.apiKey);
+    if (k) keys.set(p.id, k);
+  }
 
+  const client = clientFor(initialProvider, initialKey);
   const sessionId = await resolveSessionId(args);
 
   const session = AgentSessionRuntime.create({
     cwd: process.cwd(),
     tools: createBuiltinRegistry(),
     client,
+    // /model 切换时：按目标模型所属 provider 换 client
+    clientFactory: (modelId: string) => {
+      const p = findProviderForModel(modelId);
+      const key = keys.get(p.id);
+      return key ? clientFor(p, key) : undefined;
+    },
     model: args.model,
     sessionId,
   });

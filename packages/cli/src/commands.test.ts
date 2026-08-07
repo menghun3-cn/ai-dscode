@@ -30,6 +30,7 @@ function makeSessionOps(overrides: Partial<SlashSessionOps> = {}): SlashSessionO
 
 function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext & { model: string } {
   let model = 'deepseek-chat';
+  let thinkingMode = 'stream' as 'stream' | 'fold' | 'off';
   const ctx: SlashCommandContext = {
     get model() {
       return model;
@@ -40,6 +41,12 @@ function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandCont
     }),
     clearMessages: vi.fn(),
     costText: () => 'cost: $0.001',
+    get thinkingMode() {
+      return thinkingMode;
+    },
+    setThinkingMode: vi.fn((mode) => {
+      thinkingMode = mode;
+    }),
     session: makeSessionOps(),
     ...overrides,
   };
@@ -95,6 +102,19 @@ describe('handleSlash（todos M1-S5 验收）', () => {
   it('/cost 输出计费文本', async () => {
     const r = await handleSlash('/cost', makeCtx({ costText: () => 'cost: $0.01' }));
     expect(r.output).toContain('cost: $0.01');
+  });
+
+  it('/thinking 切换 reasoning 展示模式（SC-3.2）', async () => {
+    const ctx = makeCtx();
+    const r = await handleSlash('/thinking fold', ctx);
+    expect(ctx.setThinkingMode).toHaveBeenCalledWith('fold');
+    expect(r.output).toContain('fold');
+  });
+
+  it('/thinking 无参显示当前模式与用法', async () => {
+    const r = await handleSlash('/thinking', makeCtx());
+    expect(r.output).toContain('stream');
+    expect(r.output).toContain('stream|fold|off');
   });
 
   it('/clear 清空会话', async () => {

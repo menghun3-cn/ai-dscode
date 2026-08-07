@@ -85,6 +85,28 @@ export function resolveBaseUrl(env: Record<string, string | undefined> = process
   return env['DSCODE_BASE_URL'] ?? env['DSAPI_BASE_URL'] ?? 'https://api.deepseek.com';
 }
 
+export interface ProviderKeyOptions {
+  /** 测试注入：auth.json 绝对路径 */
+  authFile?: string;
+  /** 测试注入：环境变量快照 */
+  env?: Record<string, string | undefined>;
+}
+
+/** 按 provider 解析 key：auth.json 对应条目 > ${PROVIDER}_API_KEY 环境变量（如 OPENAI_API_KEY） */
+export async function resolveProviderApiKey(providerId: string, opts: ProviderKeyOptions = {}): Promise<string | undefined> {
+  const env = opts.env ?? process.env;
+  const authFile = opts.authFile ?? defaultAuthFile(env);
+  try {
+    const raw = await fs.readFile(authFile, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, { type?: string; key?: string }>;
+    const entry = parsed[providerId];
+    if (entry?.key) return entry.key;
+  } catch {
+    // 文件不存在/损坏：落到 env
+  }
+  return env[`${providerId.toUpperCase()}_API_KEY`];
+}
+
 async function readAuthFile(authFile: string): Promise<Record<string, { type: string; key: string }>> {
   try {
     const raw = await fs.readFile(authFile, 'utf8');
