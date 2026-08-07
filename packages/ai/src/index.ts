@@ -12,4 +12,4 @@ export * from './sse.js';
 export * from './auth.js';
 export * from './deepseek.js';
 
-export const AI_PACKAGE_VERSION = '0.1.1';
+export const AI_PACKAGE_VERSION = '0.2.0';

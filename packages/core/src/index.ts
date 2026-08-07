@@ -23,4 +23,4 @@ export * from './session/entries.js';
 export * from './session/manager.js';
 export * from './session/context.js';
 
-export const CORE_PACKAGE_VERSION = '0.1.1';
+export const CORE_PACKAGE_VERSION = '0.2.0';
