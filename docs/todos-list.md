@@ -44,12 +44,8 @@
 
 ## Milestone 4：扩展系统（v0.4）✅ 已完成
 
-> **状态：2026-08-07 落地（SC-4.1 单测形态 + 真实网关扩展工具实测；M4-S1~S5 全部完成）。**
-> M4 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 4。
-> P1 skill 系统后置，不阻塞 M4 关闭。
-
-### M4-S6 Skill 系统（后置 P1 打磨项）
-- [ ] [P1] [M4] Skill 系统与 prompt 模板 → 验收：`/skill:lint` 加载 lint 指令注入上下文
+> **状态：2026-08-07 落地（SC-4.1 单测形态 + 真实网关扩展工具实测；M4-S1~S6 全部完成，含后置 P1）。**
+> M4 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 4。
 
 ---
 

@@ -207,8 +207,7 @@
 
 ## Milestone 4：扩展系统（v0.4）✅ 2026-08-07 落地
 
-> 全部完成项从 todos-list.md 迁入（M4-S1~S5）。SC-4.1 单测形态 + 真实网关扩展工具实测。
-> P1 skill 系统后置（留在 todos-list.md 的 M4-S6）。
+> 全部完成项从 todos-list.md 迁入（M4-S1~S6，含后置 P1）。SC-4.1 单测形态 + 真实网关扩展工具实测。
 
 ### M4-S1 事件总线与 hook 协议
 - **完成时间**：2026-08-07
@@ -240,6 +239,12 @@
 - **内容**：ctx.ui（confirm/input/select/notify）接口 + 默认控制台实现；扩展可通过 `dscode.ui` 弹确认框/输入/选择。
 - **证据**：api.test.ts ui 存在性用例；consoleUi 兜底实现。
 - **对应**：SC-4.4
+
+### M4-S6 Skill 系统（后置 P1）
+- **完成时间**：2026-08-07
+- **内容**：`core/skill/skill.ts`——SkillManager（发现/加载全局 `~/.dscode/skills/*.md` + 项目 `.dscode/skills/*.md`，名字 `[\w.-]+` 防路径穿越；skill 仅为 prompt 文本不执行代码，故不强制 trust）；`AgentSession.applySkill()` 把指令追加进 system prompt（渐进披露，不常驻，见 原理-agentloop.md §7）；CLI `/skill:<名字>`（如 `/skill:lint`）+ `/skill` 列出。
+- **证据**：`skill.test.ts` 4 条（聚合/加载/缺失/穿越防护）；commands.test.ts `/skill:lint` 3 条；session.test.ts applySkill 注入 1 条；真实网关实测 `/skill:lint` 返回"已加载 skill: lint"。
+- **对应**：FR-7.2（skill 按需加载）、todos M4-S6 验收（`/skill:lint` 加载 lint 指令注入上下文）
 
 ### 过程中修复的关键缺陷（经验沉淀）
 - **扩展工具模型不可见**：初版扩展工具只在 executeTool 回退，LLM 的 tools schema 不含它们——修复为 run() 把扩展工具并入 schema（实测模型成功调用 greet 工具）。另支持 supplier 形式，/reload 后新工具立即可用。
