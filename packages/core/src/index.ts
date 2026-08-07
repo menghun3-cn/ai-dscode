@@ -35,4 +35,4 @@ export * from './compact/compact.js';
 export * from './mcp/mcp-client.js';
 export * from './mcp/mcp-tools.js';
 
-export const CORE_PACKAGE_VERSION = '0.6.0';
+export const CORE_PACKAGE_VERSION = '0.7.0';

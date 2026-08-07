@@ -330,6 +330,29 @@
 
 ---
 
+## Milestone 7：MCP 与 RPC（v0.7）✅ 2026-08-08 落地
+
+> 完成项从 todos-list.md 迁入（M7-S1~S2）。rpc send→回复往返真实网关实测通过。
+> P2 json 模式后置（留在 todos-list.md 的 M7-S3）。
+
+### M7-S1 MCP client + 工具注入
+- **完成时间**：2026-08-08
+- **内容**：`mcp/mcp-client.ts`——stdio 传输（spawn 子进程 + newline JSON-RPC 2.0）、initialize 握手（协议版本检查 + notifications/initialized）、tools/list、tools/call、id 匹配请求响应、close 生命周期；`mcp/mcp-tools.ts`——`wrapMcpTool`（JSON Schema → Type.Unsafe、`serverName.toolName` 隔离命名防冲突）、`registerMcpTools`；build-session 经 `DSCODE_MCP_SERVERS` env（JSON `{ name: { command, args } }`）装配，连接失败不阻塞启动。
+- **证据**：`mcp-client.test.ts` 5 条（真实 stdio 假 server 握手/listTools/callTool 往返；隔离命名与执行转发；批量注册）。
+- **对应**：FR-11、todos M7 P1（stdio 已落地；官方 filesystem server 实测需用户环境）
+
+### M7-S2 rpc 模式（JSON-RPC over stdio）
+- **完成时间**：2026-08-08
+- **内容**：`rpc.ts`——`ping` / `send`（跑 Agent Loop，逐事件发 `event` 通知，回复最终文本）/ `quit`；未知方法 -32601；dispatcher 占位分支替换为 runRpc 分发。
+- **证据**：`rpc.test.ts` 3 条（ping/事件流+回复往返/未知方法）；真实网关实测 `{"id":2,"result":{"reply":"…"}}` send→回复往返成功。
+- **对应**：FR-11、todos M7 P1 验收（外部进程发 send 完成"提问→回复"往返）
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **readline async handler 不串行**：quit 抢先结束进程截断 send 回复——改为**处理链串行**（chain 逐个 then）。
+- **stdin EOF 即退出**：管道关闭触发 close 立即 resolve——改为**等处理链 settle 后再结束**，避免截断 send 回复。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）
