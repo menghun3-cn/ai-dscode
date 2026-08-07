@@ -6,7 +6,7 @@
  * - dispose() 释放（M1-S4 验收：new + dispose 无异常）
  */
 
-import type { ChatMessage, ToolCall, StreamEvent } from '@dscode/ai';
+import type { ChatMessage, ToolCall, StreamEvent, StreamUsage } from '@dscode/ai';
 import type { ToolRegistry } from '../tool.js';
 import type { AgentEvent } from './events.js';
 import { assembleSystemPrompt } from './prompt.js';
@@ -108,9 +108,18 @@ export class AgentSession {
     this.messages.push({ role: 'user', content: input });
     yield { type: 'agent_start', input };
 
+    // 累计所有 LLM 调用轮的 usage（tokens 数据源，供 TUI 显示）
+    const usage: StreamUsage = {};
+    const accumulateUsage = (evUsage: StreamUsage) => {
+      usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (evUsage.prompt_tokens ?? 0);
+      usage.completion_tokens = (usage.completion_tokens ?? 0) + (evUsage.completion_tokens ?? 0);
+      usage.cache_read_input_tokens = (usage.cache_read_input_tokens ?? 0) + (evUsage.cache_read_input_tokens ?? 0);
+      usage.cache_creation_input_tokens = (usage.cache_creation_input_tokens ?? 0) + (evUsage.cache_creation_input_tokens ?? 0);
+    };
+
     for (let turn = 0; turn < this.maxTurns; turn++) {
       if (this.abortController.signal.aborted) {
-        yield { type: 'agent_settled', reason: 'aborted' };
+        yield { type: 'agent_settled', reason: 'aborted', usage };
         return;
       }
 
@@ -131,6 +140,7 @@ export class AgentSession {
         if (ev.reasoningContent) {
           yield { type: 'reasoning_update', content: ev.reasoningContent };
         }
+        if (ev.usage) accumulateUsage(ev.usage);
         // tool_calls 增量按 index 累积后的当前状态（见 client.ts parseChunk）
         if (ev.toolCalls && ev.toolCalls.length > 0) {
           toolCalls.length = 0;
@@ -146,7 +156,7 @@ export class AgentSession {
 
       // 收敛：无 tool_call → 结束
       if (toolCalls.length === 0) {
-        yield { type: 'agent_settled', reason: 'no-tool-calls' };
+        yield { type: 'agent_settled', reason: 'no-tool-calls', usage };
         return;
       }
 
@@ -162,7 +172,7 @@ export class AgentSession {
       }
     }
 
-    yield { type: 'agent_settled', reason: 'max-turns' };
+    yield { type: 'agent_settled', reason: 'max-turns', usage };
   }
 
   /** 执行单个工具调用；任何异常都转为 isError 结果而非 reject（错误隔离） */

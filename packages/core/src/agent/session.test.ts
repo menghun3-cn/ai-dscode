@@ -69,7 +69,7 @@ describe('AgentSession（M1-S4）', () => {
     const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('你好')]) });
     const events = [];
     for await (const ev of session.run('问好')) events.push(ev);
-    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls' });
+    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
     expect(events.filter((e) => e.type === 'message_update')).toHaveLength(1);
     expect(session.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -89,7 +89,7 @@ describe('AgentSession（M1-S4）', () => {
     const toolResults = events.filter((e) => e.type === 'tool_result');
     expect(toolResults).toHaveLength(1);
     expect((toolResults[0] as { output: string }).output).toContain('hello');
-    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls' });
+    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
     // messages: user + assistant(tool_calls) + tool + assistant(最终回答)
     expect(session.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
   });
@@ -101,6 +101,33 @@ describe('AgentSession（M1-S4）', () => {
       if (ev.type === 'message_update') updates.push(ev.content);
     }
     expect(updates).toEqual(['你', '好']);
+  });
+
+  it('agent_settled 携带累计 usage（多轮 token 求和）', async () => {
+    // 第一轮：tool_call（usage 100/10），第二轮：纯内容（usage 50/5）→ 累计 150/15
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([
+        [{ toolCalls: [readToolCall], finishReason: 'tool_calls', usage: { prompt_tokens: 100, completion_tokens: 10 } }],
+        [{ content: '完成', usage: { prompt_tokens: 50, completion_tokens: 5 } }],
+      ]),
+    });
+    let settledUsage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    for await (const ev of session.run('x')) {
+      if (ev.type === 'agent_settled') settledUsage = ev.usage;
+    }
+    expect(settledUsage?.prompt_tokens).toBe(150);
+    expect(settledUsage?.completion_tokens).toBe(15);
+  });
+
+  it('无 usage 事件时 agent_settled.usage 为空对象', async () => {
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('hi')]) });
+    let settledUsage: unknown;
+    for await (const ev of session.run('x')) {
+      if (ev.type === 'agent_settled') settledUsage = ev.usage;
+    }
+    expect(settledUsage).toEqual({});
   });
 
   it('同轮多 tool_call 并行执行（时间上早于串行）', async () => {
@@ -173,7 +200,7 @@ describe('AgentSession（M1-S4）', () => {
     const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: loopClient, maxTurns: 3 });
     const events = [];
     for await (const ev of session.run('死循环')) events.push(ev);
-    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'max-turns' });
+    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'max-turns', usage: {} });
     // maxTurns=3：3 轮 LLM 均返回 tool_calls 并执行 → 3 个 tool_result 后被强制收敛
     expect(events.filter((e) => e.type === 'tool_result')).toHaveLength(3);
   });

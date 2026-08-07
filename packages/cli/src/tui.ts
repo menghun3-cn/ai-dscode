@@ -61,6 +61,32 @@ export function costText(model: string, usage: UsageStats): string {
   return `模型 ${model} · input ${usage.promptTokens} tok · output ${usage.completionTokens} tok · cache ${usage.cacheReadTokens} tok · 预估成本 $${total.toFixed(4)}`;
 }
 
+/** token 友好格式化：1.2K / 518.8K / 1M / 1.2M（整数省略小数） */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const v = n / 1_000_000;
+    return `${Number.isInteger(v) ? v : v.toFixed(1)}M`;
+  }
+  if (n >= 1_000) {
+    const v = n / 1_000;
+    return `${Number.isInteger(v) ? v : v.toFixed(1)}K`;
+  }
+  return `${n}`;
+}
+
+/** 秒数友好格式化：5s / 1m 27s */
+export function fmtDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/** 底部状态栏文本：模型 · 路径 · used/窗口 tok (占比) */
+export function statusText(opts: { model: string; cwd: string; usedTokens: number; contextWindow: number }): string {
+  const pct = opts.contextWindow > 0 ? Math.round((opts.usedTokens / opts.contextWindow) * 100) : 0;
+  return `${opts.model} · ${opts.cwd} · ${fmtTokens(opts.usedTokens)}/${fmtTokens(opts.contextWindow)} tok (${pct}%)`;
+}
+
 export async function runInteractive(session: AgentSession): Promise<number> {
   const availableModels = deepseekModels.map((m) => m.id);
   const rl = readline.createInterface({
@@ -75,6 +101,25 @@ export async function runInteractive(session: AgentSession): Promise<number> {
   let model = session.model;
   let running = false;
   const usage: UsageStats = { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cost: 0 };
+
+  const contextWindowOf = (modelId: string): number =>
+    deepseekModels.find((m) => m.id === modelId)?.contextWindow ?? 65536;
+
+  // 底部状态栏：保存光标 → 移到末行 → 清行 → 写状态 → 恢复光标
+  const drawStatusBar = () => {
+    if (!process.stdout.isTTY) return;
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
+    const text = truncateByWidth(
+      statusText({ model, cwd: session.cwd, usedTokens: usage.promptTokens, contextWindow: contextWindowOf(model) }),
+      cols - 1,
+    );
+    process.stdout.write(`\x1b[s\x1b[${rows};1H\x1b[K${text}\x1b[u`);
+  };
+  const refresh = () => {
+    drawStatusBar();
+    rl.prompt();
+  };
 
   const slashCtx: SlashCommandContext = {
     get model() {
@@ -95,7 +140,7 @@ export async function runInteractive(session: AgentSession): Promise<number> {
     if (running) {
       session.abort(); // 中止当前运行（SC-1.9：Ctrl+C 可中断）
       process.stdout.write('\n[已中止]\n');
-      rl.prompt();
+      refresh();
     } else {
       process.stdout.write('\n');
       rl.close();
@@ -105,12 +150,12 @@ export async function runInteractive(session: AgentSession): Promise<number> {
 
   rl.on('SIGINT', onSigint);
   process.stdout.write('dscode — 输入 /help 查看命令，/exit 退出\n');
-  rl.prompt();
+  refresh();
 
   for await (const line of rl) {
     const input = line.trim();
     if (!input) {
-      rl.prompt();
+      refresh();
       continue;
     }
 
@@ -122,12 +167,13 @@ export async function runInteractive(session: AgentSession): Promise<number> {
         rl.close();
         return res.exitCode;
       }
-      rl.prompt();
+      refresh();
       continue;
     }
 
     // Agent 任务：先展开 @文件 / !命令 注入（P1）
     running = true;
+    const turnStart = Date.now();
     try {
       const expanded = await expandInput(input, session.cwd);
       for await (const ev of session.run(expanded)) {
@@ -137,9 +183,13 @@ export async function runInteractive(session: AgentSession): Promise<number> {
         } else {
           renderEvent(ev);
         }
-        if (ev.type === 'tool_call') {
-          // 估算：tool_call 数计入 usage（精确计数 M3 由 provider usage 事件落地）
-          usage.completionTokens += 1;
+        if (ev.type === 'agent_settled') {
+          // 真实 usage 更新统计（替换原 tool_call 估算），并显示耗时/tokens
+          usage.promptTokens = ev.usage.prompt_tokens ?? usage.promptTokens;
+          usage.completionTokens = ev.usage.completion_tokens ?? usage.completionTokens;
+          usage.cacheReadTokens = ev.usage.cache_read_input_tokens ?? usage.cacheReadTokens;
+          const elapsed = fmtDuration(Date.now() - turnStart);
+          process.stdout.write(`\x1b[90m(${elapsed} · ↑ ${fmtTokens(usage.promptTokens)} tokens)\x1b[0m`);
         }
       }
       process.stdout.write('\n');
@@ -148,7 +198,7 @@ export async function runInteractive(session: AgentSession): Promise<number> {
     } finally {
       running = false;
     }
-    rl.prompt();
+    refresh();
   }
 
   return 0;
