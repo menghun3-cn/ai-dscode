@@ -14,6 +14,8 @@ export interface ToolExecutionContext {
   signal?: AbortSignal;
   /** 流式更新回调（TUI/print 消费，可选） */
   onUpdate?: (chunk: string) => void;
+  /** M5：sub-agent 工厂（task 工具用）——隔离子会话执行并返回摘要 */
+  subAgent?: (prompt: string) => Promise<string>;
 }
 
 /** 工具执行结果：output 回喂模型，metadata 供渲染 */

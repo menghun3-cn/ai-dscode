@@ -29,5 +29,7 @@ export * from './extension/api.js';
 export * from './extension/trust.js';
 export * from './extension/loader.js';
 export * from './skill/skill.js';
+export * from './permission/permission.js';
+export * from './plan/plan.js';
 
 export const CORE_PACKAGE_VERSION = '0.4.0';

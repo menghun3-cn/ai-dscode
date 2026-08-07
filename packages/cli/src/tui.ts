@@ -300,6 +300,35 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
           : '暂无 skills（放 ~/.dscode/skills/*.md 或 .dscode/skills/*.md）';
       },
     },
+    // M5：Plan 模式（/plan 只读 → /accept-plan 落地，SC-4.4）
+    plan: {
+      enter: () => {
+        session.plan.enter();
+        return '已进入 Plan 模式（只读：write/edit 等写工具被拒）。产出步骤清单后 /accept-plan 落地。';
+      },
+      accept: () => {
+        session.plan.accept();
+        return '已接受计划，进入执行阶段（写工具放行）。';
+      },
+      setSteps: (titles) => {
+        session.plan.setSteps(titles);
+        const steps = session.plan.getSteps();
+        return `计划步骤已设置（${steps.length} 步）:\n${steps.map((s) => `  ${s.id} [${s.status}] ${s.title}`).join('\n')}`;
+      },
+    },
+    // M5：权限规则持久化（/allow /deny，M5 P1）
+    permission: {
+      allow: async (rule) => {
+        const { addPermissionRule } = await import('@dscode/core');
+        await addPermissionRule('allow', rule);
+        return `已允许并持久化: ${rule}（下次该操作直接放行）`;
+      },
+      deny: async (rule) => {
+        const { addPermissionRule } = await import('@dscode/core');
+        await addPermissionRule('deny', rule);
+        return `已拒绝并持久化: ${rule}（下次该操作直接拦截）`;
+      },
+    },
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
       id: session.sessionId,

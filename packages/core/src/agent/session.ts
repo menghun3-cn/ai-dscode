@@ -17,6 +17,8 @@ import { newEntryId, type SessionEntry } from '../session/entries.js';
 import { EventBus } from '../extension/bus.js';
 import type { ExtensionToolDef } from '../extension/api.js';
 import { SkillManager } from '../skill/skill.js';
+import { PermissionEngine, isDangerousCommand } from '../permission/permission.js';
+import { PlanManager, WRITE_TOOLS } from '../plan/plan.js';
 
 /** LLM client 最小接口：@dscode/ai 的 OpenAIClient 结构化满足，测试可 mock */
 export interface ChatStreamer {
@@ -36,6 +38,8 @@ export interface AgentSessionOptions {
   clientFactory?: (modelId: string) => ChatStreamer | undefined;
   /** M4：扩展事件总线（缺省自建空总线） */
   bus?: EventBus;
+  /** M5：权限引擎（危险命令二次确认；缺省自建，无确认回调时默认拒绝） */
+  permission?: PermissionEngine;
   /** M4：扩展注册的工具（executeTool 未命中内置时回退）；可传 supplier 支持 /reload 后取最新 */
   extTools?: ExtensionToolDef[] | (() => ExtensionToolDef[]);
   model?: string;
@@ -71,6 +75,9 @@ export class AgentSession {
   private readonly extTools: ExtensionToolDef[];
   private readonly extToolsSupplier?: () => ExtensionToolDef[];
   private readonly skillManager: SkillManager;
+  private readonly permission: PermissionEngine;
+  /** M5：Plan 模式（/plan 只读 → /accept-plan 落地，SC-4.4） */
+  readonly plan = new PlanManager();
   private client: ChatStreamer;
   private readonly clientFactory?: (modelId: string) => ChatStreamer | undefined;
   private modelId: string;
@@ -86,6 +93,7 @@ export class AgentSession {
     this.tools = opts.tools;
     this.bus = opts.bus ?? new EventBus();
     this.skillManager = new SkillManager({ cwd: opts.cwd });
+    this.permission = opts.permission ?? new PermissionEngine();
     if (typeof opts.extTools === 'function') {
       this.extToolsSupplier = opts.extTools;
       this.extTools = [];
@@ -358,6 +366,19 @@ export class AgentSession {
     yield { type: 'agent_settled', reason: 'max-turns', usage };
   }
 
+  /** 权限检查（M5，SC-4.3）：bash 危险命令需二次确认；放行返回 null，拦截返回原因 */
+  private async checkPermission(toolName: string, params: Record<string, unknown>): Promise<string | null> {
+    if (toolName === 'bash') {
+      const command = String(params['command'] ?? '');
+      const danger = isDangerousCommand(command);
+      if (danger) {
+        const verdict = await this.permission.check(`bash:${command}`, { dangerousReason: danger });
+        if (!verdict.allow) return verdict.reason ?? '危险操作被拒绝';
+      }
+    }
+    return null;
+  }
+
   /** 执行单个工具调用；任何异常都转为 isError 结果而非 reject（错误隔离） */
   private async executeTool(tc: ToolCall): Promise<ToolCallOutcome> {
     const toolCallId = tc.id || `call_${Math.random().toString(36).slice(2, 10)}`;
@@ -372,10 +393,13 @@ export class AgentSession {
     // M4：扩展注册的工具回退（未命中内置时；supplier 取最新，支持 /reload）
     const extTools = this.extToolsSupplier ? this.extToolsSupplier() : this.extTools;
     if (!tool) {
+      // M5：扩展工具也走权限检查（危险命令等）
       const ext = extTools.find((t) => t.name === toolName);
       if (!ext) {
         return { toolCallId, toolName, output: `未知工具: ${toolName}`, isError: true };
       }
+      const extVerdict = await this.checkPermission(toolName, params);
+      if (extVerdict !== null) return { toolCallId, toolName, output: `[权限拦截] ${toolName}（${extVerdict}）`, isError: true };
       try {
         const result = await ext.execute(params);
         return { toolCallId, toolName, output: result.output, isError: !!result.isError };
@@ -388,10 +412,26 @@ export class AgentSession {
         };
       }
     }
+    // M5：Plan 模式写工具拒绝（SC-4.4：/plan 只读）
+    if (this.plan.isActive && WRITE_TOOLS.has(toolName)) {
+      return {
+        toolCallId,
+        toolName,
+        output: `[plan 只读] ${toolName} 在 Plan 模式下被拒绝。请用 /accept-plan 接受计划后再执行。`,
+        isError: true,
+      };
+    }
+    // M5：危险命令二次确认（bash 等，SC-4.3）
+    const verdict = await this.checkPermission(toolName, params);
+    if (verdict !== null) {
+      return { toolCallId, toolName, output: `[权限拦截] ${toolName}: ${params['command'] ?? toolName}（${verdict}）`, isError: true };
+    }
     try {
       const result = await tool.execute(toolCallId, params as never, {
         cwd: this.cwd,
         signal: this.abortController.signal,
+        // M5：sub-agent 工厂——隔离 AgentSession 执行（SC-4.5）
+        subAgent: (prompt) => this.runSubAgent(prompt),
       });
       return { toolCallId, toolName, output: result.output, isError: !!result.isError };
     } catch (err) {
@@ -402,5 +442,25 @@ export class AgentSession {
         isError: true,
       };
     }
+  }
+
+  /** 派生隔离的子 AgentSession 执行子任务，结果截断摘要回传（原理-plan-and-execute.md §6.4） */
+  private async runSubAgent(prompt: string): Promise<string> {
+    const sub = new AgentSession({
+      cwd: this.cwd,
+      tools: this.tools,
+      client: this.client,
+      bus: new EventBus(), // 子会话独立总线：扩展事件不重复触发
+      permission: this.permission,
+      persist: false, // 子会话不落盘
+      debug: this.debug,
+    });
+    await sub.prepare();
+    let out = '';
+    for await (const ev of sub.run(prompt)) {
+      if (ev.type === 'message_update') out += ev.content;
+    }
+    const trimmed = out.length > 4000 ? `${out.slice(0, 4000)}…（已截断）` : out;
+    return trimmed || '（子 agent 无输出）';
   }
 }

@@ -20,6 +20,7 @@ import {
   AgentSessionRuntime,
   EventBus,
   ExtensionManager,
+  PermissionEngine,
   SessionManager,
   createBuiltinRegistry,
   type AgentSession,
@@ -134,11 +135,26 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
   });
   await extManager.loadAll();
 
+  // M5：权限引擎（危险命令二次确认；非 TTY 无交互时默认拒绝）
+  const permission = new PermissionEngine({
+    confirm: async (message) => {
+      if (!process.stdin.isTTY) return false;
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        const answer = await rl.question(`${message} `);
+        return /^y/i.test(answer.trim());
+      } finally {
+        rl.close();
+      }
+    },
+  });
+
   const session = AgentSessionRuntime.create({
     cwd: process.cwd(),
     tools: createBuiltinRegistry(),
     client,
     bus,
+    permission,
     extTools: () => extManager.getTools(), // supplier：/reload 后新工具立即可用
     // /model 切换时：按目标模型所属 provider 换 client
     clientFactory: (modelId: string) => {

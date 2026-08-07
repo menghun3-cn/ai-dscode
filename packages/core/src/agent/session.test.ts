@@ -7,6 +7,7 @@ import { AgentSession, type ChatStreamer } from './session.js';
 import { AgentSessionRuntime } from './runtime.js';
 import { ToolRegistry } from '../tool.js';
 import { readTool } from '../tools/read.js';
+import { createBuiltinRegistry } from '../tools/index.js';
 import { EventBus } from '../extension/bus.js';
 
 let tmp: string;
@@ -381,5 +382,75 @@ describe('AgentSession（M1-S4）', () => {
       if (ev.type === 'message_update') content += ev.content;
     }
     expect(content).toBe('GPT 回答');
+  });
+
+  it('Plan 模式写工具被拒（SC-4.4：/plan 只读）', async () => {
+    const registry = new ToolRegistry();
+    const { writeTool } = await import('../tools/write.js');
+    registry.register(writeTool);
+    const writeCall: ToolCall = { id: 'c1', type: 'function', function: { name: 'write', arguments: JSON.stringify({ path: 'a.txt', content: 'x' }) } };
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registry,
+      // 两轮 write 调用：第一轮 plan 拦截，第二轮（accept 后）放行
+      client: scriptedClient([
+        [{ toolCalls: [writeCall], finishReason: 'tool_calls' }],
+        contentTurn('完成'),
+        [{ toolCalls: [writeCall], finishReason: 'tool_calls' }],
+        contentTurn('完成'),
+      ]),
+    });
+    session.plan.enter(); // /plan
+    const events = [];
+    for await (const ev of session.run('改文件')) events.push(ev);
+    const result = events.find((e) => e.type === 'tool_result') as { isError: boolean; output: string };
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('[plan 只读]');
+    // accept 后放行
+    session.plan.accept();
+    const events2 = [];
+    for await (const ev of session.run('再改')) events2.push(ev);
+    const result2 = events2.find((e) => e.type === 'tool_result') as { isError: boolean };
+    expect(result2.isError).toBe(false);
+  });
+
+  it('危险命令二次确认拦截（SC-4.3：无确认回调默认拒绝）', async () => {
+    const registry = new ToolRegistry();
+    const { bashTool } = await import('../tools/bash.js');
+    registry.register(bashTool);
+    const dangerousCall: ToolCall = { id: 'c1', type: 'function', function: { name: 'bash', arguments: JSON.stringify({ command: 'rm -rf /tmp/x' }) } };
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registry,
+      client: scriptedClient([[{ toolCalls: [dangerousCall], finishReason: 'tool_calls' }], contentTurn('完成')]),
+    });
+    const events = [];
+    for await (const ev of session.run('删东西')) events.push(ev);
+    const result = events.find((e) => e.type === 'tool_result') as { isError: boolean; output: string };
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('[权限拦截]');
+  });
+
+  it('sub-agent：task 工具隔离子会话执行并回传摘要（SC-4.5）', async () => {
+    const taskCall: ToolCall = { id: 'c1', type: 'function', function: { name: 'task', arguments: JSON.stringify({ prompt: '收集 TODO 注释' }) } };
+    // 轮次：主→task 调用；子会话消费一轮内容；主继续一轮收敛
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: createBuiltinRegistry(),
+      client: scriptedClient([
+        [{ toolCalls: [taskCall], finishReason: 'tool_calls' }],
+        [{ content: '子 agent 收集到 3 处 TODO', finishReason: 'stop' }],
+        [{ content: '主 agent 完成', finishReason: 'stop' }],
+      ]),
+    });
+    const events = [];
+    for await (const ev of session.run('派子任务')) events.push(ev);
+    const result = events.find((e) => e.type === 'tool_result' && (e as { toolName?: string }).toolName === 'task') as {
+      isError: boolean;
+      output: string;
+    };
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain('子 agent 收集到 3 处 TODO');
+    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
   });
 });

@@ -55,6 +55,15 @@ function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandCont
       apply: vi.fn(async (name) => (name === 'lint' ? '已加载 skill: lint' : `未找到 skill: ${name}`)),
       list: vi.fn(async () => '可用 skills:\n  lint'),
     },
+    plan: {
+      enter: () => '已进入 Plan 模式',
+      accept: () => '已接受计划',
+      setSteps: (titles) => `计划步骤已设置（${titles.length} 步）`,
+    },
+    permission: {
+      allow: vi.fn(async (rule) => `已允许: ${rule}`),
+      deny: vi.fn(async (rule) => `已拒绝: ${rule}`),
+    },
     session: makeSessionOps(),
     ...overrides,
   };
@@ -140,6 +149,32 @@ describe('handleSlash（todos M1-S5 验收）', () => {
   it('/skill 列出可用 skills', async () => {
     const r = await handleSlash('/skill', makeCtx());
     expect(r.output).toContain('lint');
+  });
+
+  it('/plan 进入只读模式（SC-4.4）', async () => {
+    const ctx = makeCtx();
+    const r = await handleSlash('/plan', ctx);
+    expect(r.output).toContain('Plan 模式');
+  });
+
+  it('/accept-plan 落地执行', async () => {
+    const r = await handleSlash('/accept-plan', makeCtx());
+    expect(r.output).toContain('已接受计划');
+  });
+
+  it('/plan-set 设置步骤清单', async () => {
+    const r = await handleSlash('/plan-set 读需求,改代码', makeCtx());
+    expect(r.output).toContain('2 步');
+  });
+
+  it('/allow 与 /deny 持久化规则（M5 P1）', async () => {
+    const ctx = makeCtx();
+    const r1 = await handleSlash('/allow bash:ls -la', ctx);
+    expect(ctx.permission.allow).toHaveBeenCalledWith('bash:ls -la');
+    expect(r1.output).toContain('已允许');
+    const r2 = await handleSlash('/deny bash:rm -rf *', ctx);
+    expect(ctx.permission.deny).toHaveBeenCalledWith('bash:rm -rf *');
+    expect(r2.output).toContain('已拒绝');
   });
 
   it('/clear 清空会话', async () => {

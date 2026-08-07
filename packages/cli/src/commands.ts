@@ -52,6 +52,17 @@ export interface SlashCommandContext {
     apply: (name: string) => Promise<string>;
     list: () => Promise<string>;
   };
+  /** M5：Plan 模式（/plan 只读 → /accept-plan 落地，SC-4.4） */
+  plan: {
+    enter: () => string;
+    accept: () => string;
+    setSteps: (titles: string[]) => string;
+  };
+  /** M5：权限规则（/allow /deny 持久化，M5 P1） */
+  permission: {
+    allow: (rule: string) => Promise<string>;
+    deny: (rule: string) => Promise<string>;
+  };
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -66,7 +77,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'skill', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'skill', 'plan', 'accept-plan', 'plan-set', 'allow', 'deny', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -103,6 +114,11 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /extensions     列出已加载扩展与错误（M4）',
           '  /reload         热重载扩展（改完即生效）',
           '  /skill:<名字>   加载 skill 指令注入上下文（如 /skill:lint；/skill 列出）',
+          '  /plan           进入 Plan 模式（只读：写工具被拒，SC-4.4）',
+          '  /plan-set <步骤…>  设置计划步骤清单（逗号分隔）',
+          '  /accept-plan    接受计划，进入执行',
+          '  /allow <规则>   允许规则并持久化（如 "bash:ls -la"，M5 P1）',
+          '  /deny <规则>    拒绝规则并持久化（如 "bash:rm -rf *"）',
           '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
@@ -161,6 +177,25 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
     }
     case 'skill': {
       return { handled: true, output: await ctx.skills.list() };
+    }
+    case 'plan': {
+      return { handled: true, output: ctx.plan.enter() };
+    }
+    case 'accept-plan': {
+      return { handled: true, output: ctx.plan.accept() };
+    }
+    case 'plan-set': {
+      const titles = arg.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+      if (titles.length === 0) return { handled: true, output: '用法: /plan-set 步骤1,步骤2,…' };
+      return { handled: true, output: ctx.plan.setSteps(titles) };
+    }
+    case 'allow': {
+      if (!arg) return { handled: true, output: '用法: /allow <规则>（如 /allow "bash:ls -la"）' };
+      return { handled: true, output: await ctx.permission.allow(arg) };
+    }
+    case 'deny': {
+      if (!arg) return { handled: true, output: '用法: /deny <规则>（如 /deny "bash:rm -rf *"）' };
+      return { handled: true, output: await ctx.permission.deny(arg) };
     }
 
     // ---- M2 会话命令 ----
