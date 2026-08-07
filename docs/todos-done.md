@@ -205,6 +205,49 @@
 
 ---
 
+## Milestone 4：扩展系统（v0.4）✅ 2026-08-07 落地
+
+> 全部完成项从 todos-list.md 迁入（M4-S1~S5）。SC-4.1 单测形态 + 真实网关扩展工具实测。
+> P1 skill 系统后置（留在 todos-list.md 的 M4-S6）。
+
+### M4-S1 事件总线与 hook 协议
+- **完成时间**：2026-08-07
+- **内容**：`extension/events.ts`（扩展事件类型核心子集：tool_call/tool_result/agent_start/turn_*/message_update/model_select/project_trust 等）+ `extension/bus.ts`（EventBus：on/emit/block 拦截/unsubscribe/has）。
+- **证据**：`bus.test.ts` 5 条（订阅/block 拦截/多 handler 截断/unsubscribe/has）；session.test.ts tool_call block 用例（扩展返回 `{block:true}` → 工具产出 `[blocked]` isError 结果）。
+- **对应**：架构文档 §4.2.8 事件清单（核心子集先行）
+
+### M4-S2 ExtensionAPI（SC-4.1）
+- **完成时间**：2026-08-07
+- **内容**：`extension/api.ts`——on/registerTool/registerCommand/registerShortcut/registerFlag；`extension/ui.ts`——ctx.ui（confirm/input/select/notify，默认控制台实现，CLI 可注入）。
+- **证据**：`api.test.ts` 5 条（工具注册/重名报错/命令快捷键 flag/总线可达/ui 存在）。
+- **对应**：SC-4.1
+
+### M4-S3 扩展加载（jiti）+ 全局/项目位置 + hot reload
+- **完成时间**：2026-08-07
+- **内容**：`extension/loader.ts`——ExtensionManager（jiti 加载全局 `~/.dscode/extensions/*.ts` + 项目 `.dscode/extensions/*.ts`，项目需 trust；`/reload` 热重载）。
+- **证据**：`loader.test.ts` 4 条（全局加载/项目 trust 行为/热重载替换/位置发现）。
+- **关键坑**：jiti v2 无 `clearCache` 方法——热重载需逐键 `delete` 实例的 `cache` 属性（普通对象，非 Map）。
+- **对应**：SC-4.2（改扩展后 /reload 生效）
+
+### M4-S4 project_trust 机制
+- **完成时间**：2026-08-07
+- **内容**：`extension/trust.ts`——信任记录 `~/.dscode/trust.json`（DSCODE_HOME 覆盖）；buildSession 装配时对未信任项目弹交互确认（TTY）。
+- **证据**：`trust.test.ts` 3 条（默认未信任/信任落盘/互不影响）；loader 未信任项目不加载且记录错误。
+- **对应**：架构文档 §6、SC-4.3
+
+### M4-S5 ctx.ui
+- **完成时间**：2026-08-07
+- **内容**：ctx.ui（confirm/input/select/notify）接口 + 默认控制台实现；扩展可通过 `dscode.ui` 弹确认框/输入/选择。
+- **证据**：api.test.ts ui 存在性用例；consoleUi 兜底实现。
+- **对应**：SC-4.4
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **扩展工具模型不可见**：初版扩展工具只在 executeTool 回退，LLM 的 tools schema 不含它们——修复为 run() 把扩展工具并入 schema（实测模型成功调用 greet 工具）。另支持 supplier 形式，/reload 后新工具立即可用。
+- **jiti v2 无 clearCache**：`clearCache`/`cache.clear` 均不存在——用逐键 `delete jiti.cache[k]` 实现热重载。
+- **dscodeHome 双导出冲突**：extension/trust.ts 与 session/manager.ts 都导出 dscodeHome 导致 index 重导出歧义——trust.ts 改为从 manager 导入。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）

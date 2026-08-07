@@ -42,13 +42,13 @@
 
 ---
 
-## Milestone 4：扩展系统（v0.4）
+## Milestone 4：扩展系统（v0.4）✅ 已完成
 
-- [ ] [P0] [M4] 事件总线与 hook 协议 — 见架构文档事件清单，核心子集先行 → 验收：扩展能订阅 tool_call 并 block
-- [ ] [P0] [M4] ExtensionAPI — on/registerTool/registerCommand/registerShortcut/registerFlag → 验收：SC-4.1
-- [ ] [P0] [M4] 扩展加载（jiti）+ 全局/项目位置 + hot reload `/reload` → 验收：改扩展后 `/reload` 生效
-- [ ] [P0] [M4] project_trust 机制 — `.dscode/extensions` 需确认 → 验收：未信任的项目扩展不加载，日志提示
-- [ ] [P0] [M4] ctx.ui — select/confirm/input/notify/custom component → 验收：扩展可弹确认框
+> **状态：2026-08-07 落地（SC-4.1 单测形态 + 真实网关扩展工具实测；M4-S1~S5 全部完成）。**
+> M4 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 4。
+> P1 skill 系统后置，不阻塞 M4 关闭。
+
+### M4-S6 Skill 系统（后置 P1 打磨项）
 - [ ] [P1] [M4] Skill 系统与 prompt 模板 → 验收：`/skill:lint` 加载 lint 指令注入上下文
 
 ---
