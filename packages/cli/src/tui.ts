@@ -5,11 +5,11 @@
  * P1 已落地：`@文件` 引用、`!命令` 注入（expand.ts）；中文宽度见 width.ts。
  */
 
-import readline from 'node:readline';
+import readline, { type Key } from 'node:readline';
 import process from 'node:process';
 import type { AgentEvent, AgentSession } from '@dscode/core';
 import { deepseekModels } from '@dscode/ai';
-import { handleSlash, commandCompletions, type SlashCommandContext } from './commands.js';
+import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { truncateByWidth } from './width.js';
 
@@ -94,8 +94,7 @@ export async function runInteractive(session: AgentSession): Promise<number> {
     output: process.stdout,
     terminal: true,
     prompt: '\x1b[32mdscode>\x1b[0m ',
-    // 输入 / 或 /model 后 Tab 提示候选（readline 会在多候选时打印列表）
-    completer: (line: string) => [commandCompletions(line, availableModels), line],
+    // 候选提示由下方命令菜单承载（↑↓ 选择），不再用 readline 自带 Tab 补全
   });
 
   let model = session.model;
@@ -119,6 +118,80 @@ export async function runInteractive(session: AgentSession): Promise<number> {
   const refresh = () => {
     drawStatusBar();
     rl.prompt();
+  };
+
+  // 命令候选菜单：输入 / 或 /xxx 时在输入行下方弹出，↑↓ 选择、回车执行
+  let menu: { candidates: string[]; index: number } | null = null;
+  let menuLines = 0;
+
+  /** 绘制/刷新菜单（保存光标 → 清旧区 → 画新区 → 恢复光标） */
+  const drawMenu = () => {
+    if (!process.stdout.isTTY) return;
+    process.stdout.write('\x1b[s');
+    for (let i = 0; i < menuLines; i++) {
+      process.stdout.write('\x1b[1B\x1b[1G\x1b[2K'); // 下1行 → 列1 → 清整行
+    }
+    const n = menu ? menu.candidates.length : 0;
+    for (let i = 0; i < n; i++) {
+      process.stdout.write('\x1b[1B\x1b[1G');
+      const text = i === menu!.index ? `\x1b[7m${menu!.candidates[i]}\x1b[0m` : menu!.candidates[i]!;
+      process.stdout.write(`${text}\x1b[K`);
+    }
+    menuLines = n;
+    process.stdout.write('\x1b[u');
+  };
+
+  /** 根据当前输入行刷新候选菜单（无候选则关闭） */
+  const updateMenu = (line: string) => {
+    const candidates = commandCompletions(line, availableModels);
+    if (candidates.length > 0) {
+      if (!menu) {
+        menu = { candidates, index: 0 };
+      } else {
+        // 前缀变化：保留仍在候选中的选中项，否则重置
+        const cur = menu.candidates[menu.index];
+        menu.candidates = candidates;
+        menu.index = cur && candidates.includes(cur) ? candidates.indexOf(cur) : 0;
+      }
+      drawMenu();
+    } else if (menu) {
+      menu = null;
+      drawMenu(); // 清空旧菜单区
+    }
+  };
+
+  // 键盘拦截（readline 内部 _ttyWrite）：菜单激活时 ↑↓ 选择、回车执行、Esc 关闭
+  const rlAny = rl as unknown as { _ttyWrite: (s: string, key: Key) => void };
+  const origTtyWrite = rlAny._ttyWrite.bind(rl);
+  rlAny._ttyWrite = (s: string, key: Key) => {
+    if (menu) {
+      if (key.name === 'up') {
+        menu.index = cycleMenuIndex(menu.index, -1, menu.candidates.length);
+        drawMenu();
+        return; // 不传给 readline（避免触发历史导航）
+      }
+      if (key.name === 'down') {
+        menu.index = cycleMenuIndex(menu.index, 1, menu.candidates.length);
+        drawMenu();
+        return;
+      }
+      if (key.name === 'escape') {
+        menu = null;
+        drawMenu(); // 清空菜单区
+        return;
+      }
+      if (key.name === 'return') {
+        const pick = menu.candidates[menu.index] ?? rl.line;
+        menu = null;
+        drawMenu(); // 清空菜单区
+        // rl.line 类型标记 readonly，运行时为普通可写属性；提交行以它为准
+        (rl as unknown as { line: string }).line = pick;
+        origTtyWrite('\r', { name: 'return', ctrl: false, meta: false, shift: false, sequence: '\r' });
+        return;
+      }
+    }
+    origTtyWrite(s, key);
+    updateMenu(rl.line); // 输入变化时实时刷新候选
   };
 
   const slashCtx: SlashCommandContext = {

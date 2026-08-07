@@ -110,3 +110,9 @@ export function commandCompletions(line: string, availableModels: string[]): str
   }
   return [];
 }
+
+/** 菜单选中索引循环移动（↑↓ 选择，越界环绕） */
+export function cycleMenuIndex(index: number, delta: number, length: number): number {
+  if (length <= 0) return 0;
+  return (index + delta + length) % length;
+}

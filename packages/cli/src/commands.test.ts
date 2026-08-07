@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleSlash, commandCompletions, resolveModelArg, type SlashCommandContext } from './commands.js';
+import { handleSlash, commandCompletions, resolveModelArg, cycleMenuIndex, type SlashCommandContext } from './commands.js';
 
 const AVAILABLE = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
 
@@ -133,5 +133,22 @@ describe('commandCompletions（输入 / 后 Tab 提示）', () => {
 
   it('普通文本无补全', () => {
     expect(commandCompletions('你好', AVAILABLE)).toEqual([]);
+  });
+});
+
+describe('cycleMenuIndex（↑↓ 菜单选择，越界环绕）', () => {
+  it('向下环绕', () => {
+    expect(cycleMenuIndex(0, 1, 6)).toBe(1);
+    expect(cycleMenuIndex(5, 1, 6)).toBe(0);
+  });
+
+  it('向上环绕', () => {
+    expect(cycleMenuIndex(5, -1, 6)).toBe(4);
+    expect(cycleMenuIndex(0, -1, 6)).toBe(5);
+  });
+
+  it('候选为空返回 0', () => {
+    expect(cycleMenuIndex(0, 1, 0)).toBe(0);
+    expect(cycleMenuIndex(3, -1, 0)).toBe(0);
   });
 });
