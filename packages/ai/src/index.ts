@@ -13,5 +13,6 @@ export * from './auth.js';
 export * from './deepseek.js';
 export * from './anthropic.js';
 export * from './providers.js';
+export * from './models-store.js';
 
 export const AI_PACKAGE_VERSION = '0.2.0';

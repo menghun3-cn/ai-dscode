@@ -13,6 +13,7 @@ import {
   resolveApiKey,
   resolveBaseUrl,
   resolveProviderApiKey,
+  syncModelsStore,
   type Provider,
 } from '@dscode/ai';
 import { AgentSessionRuntime, SessionManager, createBuiltinRegistry, type AgentSession, type ChatStreamer } from '@dscode/core';
@@ -79,6 +80,9 @@ export async function resolveSessionId(args: CliArgs): Promise<string | undefine
 
 /** 装配会话；鉴权失败时返回 authError 而非抛异常（由模式决定如何引导） */
 export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
+  // M3 P1：远端模型目录——拉取更新 + 合并缓存（离线可用），失败静默用内置目录
+  await syncModelsStore(PROVIDERS);
+
   const initialProvider = findProvider(args.provider);
   const initialKey = await resolveKeyFor(initialProvider, args.apiKey);
   if (!initialKey) {

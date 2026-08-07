@@ -223,8 +223,8 @@ describe('commandCompletions（输入 / 后 Tab 提示）', () => {
     expect(c).toContain('/export');
   });
 
-  it('输入 /mo 提示 /model', () => {
-    expect(commandCompletions('/mo', AVAILABLE)).toEqual(['/model']);
+  it('输入 /mo 提示 /model 与 /models-update', () => {
+    expect(commandCompletions('/mo', AVAILABLE)).toEqual(['/model', '/models-update']);
   });
 
   it('输入 /model <前缀> 提示模型（前缀匹配）', () => {

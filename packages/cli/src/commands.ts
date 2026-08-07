@@ -40,6 +40,8 @@ export interface SlashCommandContext {
   /** reasoning 展示模式（/thinking 切换，SC-3.2） */
   thinkingMode: 'stream' | 'fold' | 'off';
   setThinkingMode: (mode: 'stream' | 'fold' | 'off') => void;
+  /** M3 P1：手动拉取并合并远端模型目录，返回摘要文本 */
+  updateModelsStore: () => Promise<string>;
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -54,7 +56,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -79,6 +81,7 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /cost    显示本轮 token 与成本统计',
           '  /clear   清空当前会话消息',
           '  /thinking   reasoning 展示：stream/fold/off（SC-3.2）',
+          '  /models-update  拉取并合并远端模型目录（FR-6.1）',
           '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
@@ -123,6 +126,10 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
         handled: true,
         output: `当前 reasoning 展示: ${ctx.thinkingMode}\n用法: /thinking stream|fold|off（stream=流式灰色，fold=折叠一行，off=隐藏）`,
       };
+    }
+    case 'models-update': {
+      const msg = await ctx.updateModelsStore();
+      return { handled: true, output: msg };
     }
 
     // ---- M2 会话命令 ----

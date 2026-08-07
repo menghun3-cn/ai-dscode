@@ -27,9 +27,15 @@ export interface Price {
   cacheRead: number;
 }
 
-const MODEL_COST: Record<string, Price> = Object.fromEntries(
-  PROVIDERS.flatMap((p) => p.models).map((m) => [m.id, { input: m.cost.input, output: m.cost.output, cacheRead: m.cost.cacheRead }]),
-);
+let MODEL_COST: Record<string, Price> = {};
+
+/** 重建价格表（/models-update 合并远端目录后刷新） */
+function rebuildModelCost(): void {
+  MODEL_COST = Object.fromEntries(
+    PROVIDERS.flatMap((p) => p.models).map((m) => [m.id, { input: m.cost.input, output: m.cost.output, cacheRead: m.cost.cacheRead }]),
+  );
+}
+rebuildModelCost();
 
 /** reasoning 展示模式（/thinking 切换，SC-3.2）：stream=流式灰色 / fold=折叠一行 / off=隐藏 */
 let thinkingMode: 'stream' | 'fold' | 'off' = 'stream';
@@ -103,8 +109,12 @@ export function statusText(opts: { model: string; cwd: string; usedTokens: numbe
 
 export async function runInteractive(session: AgentSession): Promise<number> {
   // M3：全部 provider 的模型（跨 provider 统一编号，/model 与 Ctrl+P 用）
-  const availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
-  const allModelDefs = PROVIDERS.flatMap((p) => p.models);
+  let availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
+  let allModelDefs = PROVIDERS.flatMap((p) => p.models);
+  const refreshModelLists = () => {
+    availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
+    allModelDefs = PROVIDERS.flatMap((p) => p.models);
+  };
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -240,6 +250,21 @@ export async function runInteractive(session: AgentSession): Promise<number> {
     },
     setThinkingMode: (mode) => {
       thinkingMode = mode;
+    },
+    // M3 P1：拉取远端模型目录并合并（/models-update）
+    updateModelsStore: async () => {
+      const { updateModelsStore, mergeModels, modelsStoreUrl } = await import('@dscode/ai');
+      const url = modelsStoreUrl();
+      if (!url) return '未配置 DSCODE_MODELS_URL，跳过（仅用内置目录）。';
+      try {
+        const store = await updateModelsStore(url);
+        mergeModels(PROVIDERS, store);
+        refreshModelLists();
+        rebuildModelCost();
+        return `已拉取并合并模型目录（${Object.keys(store).length} 个 provider，共 ${availableModels.length} 个模型）。`;
+      } catch (err) {
+        return `模型目录拉取失败: ${err instanceof Error ? err.message : String(err)}`;
+      }
     },
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
