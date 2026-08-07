@@ -76,7 +76,7 @@ async function runLibrary(prompt, cwd, apiKey, timeoutMs = 120_000) {
     import(pathToFileURL(path.join(REPO, 'packages', 'core', 'dist', 'index.js')).href),
     import(pathToFileURL(path.join(REPO, 'packages', 'ai', 'dist', 'index.js')).href),
   ]);
-  const client = new ai.OpenAIClient({ baseUrl: ai.resolveBaseUrl(), apiKey });
+  const client = new ai.OpenAIClient({ baseUrl: ai.resolveBaseUrl(), apiKey, timeoutMs });
   const session = core.AgentSessionRuntime.create({ cwd, tools: core.createBuiltinRegistry(), client, model });
   const killTimer = setTimeout(() => session.abort(), timeoutMs);
   try {
@@ -260,8 +260,8 @@ async function sc110() {
 }
 
 async function main() {
-  // DSCCODE_VERIFY_ONLY：逗号分隔的 SC 子集（如 SC-1.6,SC-1.7），便于分段跑
-  const only = (process.env['DSCCODE_VERIFY_ONLY'] ?? '')
+  // DSCODE_VERIFY_ONLY：逗号分隔的 SC 子集（如 SC-1.6,SC-1.7），便于分段跑
+  const only = (process.env['DSCODE_VERIFY_ONLY'] ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);

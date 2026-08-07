@@ -86,7 +86,7 @@
 
 ### M1-S7 测试与文档
 - **完成时间**：2026-08-07
-- **内容**：`scripts/verify-m1.mjs` 一键跑 SC-1.1~1.10，PASS/FAIL/SKIP 表 + 失败项 dump turn 轨迹（每轮 tool_call + 结果 + 收敛原因）；`DSCODE_MODEL` / `DSCCODE_VERIFY_ONLY` 可配置；README 与快速上手；全量单元测试 22 文件 100 用例。
+- **内容**：`scripts/verify-m1.mjs` 一键跑 SC-1.1~1.10，PASS/FAIL/SKIP 表 + 失败项 dump turn 轨迹（每轮 tool_call + 结果 + 收敛原因）；`DSCODE_MODEL` / `DSCODE_VERIFY_ONLY` 可配置；README 与快速上手；全量单元测试 22 文件 100 用例。
 - **证据**：`pnpm verify` 实测 **SC-1.1~1.10 全 PASS**；`pnpm test` 100 绿；`pnpm -r build` 零错误。
 - **对应**：SC-1.1~1.10、NFR-4
 

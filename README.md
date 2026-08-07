@@ -60,7 +60,7 @@ MVP 已用真实 DeepSeek 兼容网关跑通全部 10 条成功标准：
 DSCODE_BASE_URL=http://127.0.0.1:8000/v1 \
 DSCODE_API_KEY=sk-... \
 DSCODE_MODEL=deepseek-v4-flash \
-pnpm verify          # 默认模型 deepseek-v4-flash；可分段跑（DSCCODE_VERIFY_ONLY=SC-1.7）
+pnpm verify          # 默认模型 deepseek-v4-flash；可分段跑（DSCODE_VERIFY_ONLY=SC-1.7）
 ```
 
 > 首次运行无 key 时 interactive 模式会引导输入并保存到 auth.json（0600）。
