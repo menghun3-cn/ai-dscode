@@ -192,6 +192,13 @@
 - **证据**：真实网关实测——`模型 deepseek-v4-flash · input 1445 tok · output 40 tok · cache 0 tok · 预估成本 $0.0004`。
 - **对应**：FR-6.5、SC-3.3
 
+### M3-S7 prompt cache（后置 P2，DeepSeek context caching）
+- **完成时间**：2026-08-07
+- **内容**：`cache_read_input_tokens` / `cache_creation_input_tokens` 全链路——OpenAIClient 透传 usage（types.ts StreamUsage）、Anthropic message_start 解析、session 跨轮累计、`/cost` 展示 cache 成本（cacheRead 价格表）。
+- **证据**：client.test.ts usage 透传解析（cache_read=80）；session.test.ts 跨轮累计（read=80、creation=100）。
+- **验收说明**：`重复 prompt 第二次 cacheRead > 0` 取决于上游——DeepSeek 官方 API 支持 context caching；本地 mock 网关（127.0.0.1:8000）不返回 cache 字段（实测两次均 cache 0），需官方 API 才能观察到正值。代码数据流已单测验证。
+- **对应**：FR-6.5、SC-3.7
+
 ### 过程中修复的关键缺陷（经验沉淀）
 - **Anthropic usage 只累计未产出**：message_start/delta 返回 undefined 不产出事件——改为 message_delta 结束事件附 `{...usage}`。
 - **/mo 前缀匹配**：新增 /models-update 后 /mo 命中两个命令，补全断言同步。

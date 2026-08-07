@@ -125,6 +125,24 @@ describe('AgentSession（M1-S4）', () => {
     expect(settledUsage?.completion_tokens).toBe(15);
   });
 
+  it('cache_read_input_tokens 跨轮累计（M3 P2 prompt cache）', async () => {
+    // 第二轮起命中 prompt cache：第一轮 cache_read=0，第二轮 cache_read=80
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([
+        [{ toolCalls: [readToolCall], finishReason: 'tool_calls', usage: { prompt_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 100 } }],
+        [{ content: '完成', usage: { prompt_tokens: 100, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 } }],
+      ]),
+    });
+    let settledUsage: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined;
+    for await (const ev of session.run('x')) {
+      if (ev.type === 'agent_settled') settledUsage = ev.usage;
+    }
+    expect(settledUsage?.cache_read_input_tokens).toBe(80); // 命中累计
+    expect(settledUsage?.cache_creation_input_tokens).toBe(100); // 创建累计
+  });
+
   it('无 usage 事件时 agent_settled.usage 为空对象', async () => {
     const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('hi')]) });
     let settledUsage: unknown;

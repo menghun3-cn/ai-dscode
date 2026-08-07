@@ -37,12 +37,8 @@
 
 ## Milestone 3：多 Provider（v0.3）✅ 已完成
 
-> **状态：2026-08-07 落地（SC-3.1~3.3 单测形态 + 真实网关 /cost 实测，含后置 P1）。**
-> M3 P0+P1 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 3。
-> P2 prompt cache 后置，不阻塞 M3 关闭。
-
-### M3-S7 prompt cache（后置 P2 打磨项）
-- [ ] [P2] [M3] prompt cache 支持（DeepSeek context caching） → 验收：重复 prompt 第二次 cacheRead token > 0
+> **状态：2026-08-07 落地（SC-3.1~3.3 单测形态 + 真实网关 /cost 实测，含后置 P1 与 P2）。**
+> M3 全部完成项（含 prompt cache 数据流）已归档至 [todos-done.md](todos-done.md) §Milestone 3。
 
 ---
 

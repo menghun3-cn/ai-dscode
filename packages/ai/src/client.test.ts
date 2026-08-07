@@ -194,3 +194,25 @@ describe('空闲超时（回归：长输出不误杀）', () => {
     expect(calls).toBe(1); // 不重试
   });
 });
+
+describe('usage 解析（M3 P2 prompt cache）', () => {
+  it('cache_read_input_tokens 透传解析（SC：第二次 cacheRead > 0 的依据）', async () => {
+    // 第二次请求：usage 含 cache_read_input_tokens > 0
+    const fetchImpl: FetchLike = () =>
+      Promise.resolve(
+        sseResponse([
+          sseChunk('{"choices":[{"delta":{"content":"ok"},"index":0}]}'),
+          sseChunk('{"choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}'),
+          sseChunk('{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"cache_read_input_tokens":80,"cache_creation_input_tokens":20}}'),
+          'data: [DONE]\n\n',
+        ]),
+      );
+    let usage: { prompt_tokens?: number; cache_read_input_tokens?: number } | undefined;
+    for await (const ev of client(fetchImpl).streamChat({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })) {
+      if (ev.usage) usage = ev.usage;
+    }
+    expect(usage?.prompt_tokens).toBe(100);
+    expect(usage?.cache_read_input_tokens).toBe(80); // prompt cache 命中
+    expect(usage?.cache_creation_input_tokens).toBe(20);
+  });
+});
