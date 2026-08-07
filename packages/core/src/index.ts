@@ -29,4 +29,4 @@ export * from './extension/api.js';
 export * from './extension/trust.js';
 export * from './extension/loader.js';
 
-export const CORE_PACKAGE_VERSION = '0.3.0';
+export const CORE_PACKAGE_VERSION = '0.4.0';
