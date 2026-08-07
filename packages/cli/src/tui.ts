@@ -2,13 +2,15 @@
  * interactive TUI（原理-tui.md §6、todos M1-S5）。
  * MVP 最小边界：单行输入 + 滚动输出。readline terminal 模式提供
  * 行编辑与 Ctrl+C 信号；流式输出逐 token 写入 stdout。
- * 不做组件树 / @ 引用 / ! 命令 / IME（P1 打磨项）。
+ * P1 已落地：`@文件` 引用、`!命令` 注入（expand.ts）；中文宽度见 width.ts。
  */
 
 import readline from 'node:readline';
 import process from 'node:process';
 import type { AgentEvent, AgentSession } from '@dscode/core';
 import { handleSlash, type SlashCommandContext } from './commands.js';
+import { expandInput } from './expand.js';
+import { truncateByWidth } from './width.js';
 
 export interface UsageStats {
   promptTokens: number;
@@ -35,14 +37,14 @@ export function renderEvent(ev: AgentEvent): void {
       process.stdout.write(`\n\x1b[36m⚙ ${ev.toolName}\x1b[0m `);
       try {
         const args = JSON.parse(ev.args) as Record<string, unknown>;
-        process.stdout.write(JSON.stringify(args).slice(0, 200));
+        process.stdout.write(truncateByWidth(JSON.stringify(args), 200));
       } catch {
-        process.stdout.write(ev.args.slice(0, 200));
+        process.stdout.write(truncateByWidth(ev.args, 200));
       }
       process.stdout.write('\n');
       break;
     case 'tool_result':
-      if (ev.isError) process.stdout.write(`\x1b[31m✗ ${ev.output.slice(0, 300)}\x1b[0m\n`);
+      if (ev.isError) process.stdout.write(`\x1b[31m✗ ${truncateByWidth(ev.output, 300)}\x1b[0m\n`);
       break;
     default:
       break;
@@ -119,10 +121,11 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       continue;
     }
 
-    // Agent 任务
+    // Agent 任务：先展开 @文件 / !命令 注入（P1）
     running = true;
     try {
-      for await (const ev of session.run(input)) {
+      const expanded = await expandInput(input, session.cwd);
+      for await (const ev of session.run(expanded)) {
         if (ev.type === 'message_update') {
           // 流式逐 token 输出
           process.stdout.write(ev.content);

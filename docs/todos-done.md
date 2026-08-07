@@ -46,7 +46,7 @@
 ## Milestone 1：MVP 闭环（v0.1）✅ 2026-08-07 验收通过
 
 > 全部完成项从 todos-list.md 迁入。验收：`scripts/verify-m1.mjs` 跑 SC-1.1~1.10 全 PASS（真实 DeepSeek 兼容网关，`DSCODE_BASE_URL` + `DSCODE_API_KEY` + `DSCODE_MODEL`）。
-> 后置 P1 打磨项（`@`/`!` 命令、中文宽度/IME）留在 todos-list.md，不阻塞 M1 关闭（SC-1.9 边界）。
+> 后置 P1 打磨项（`@`/`!` 命令、中文宽度/IME）已于 2026-08-07 落地，见下方 M1-S5 P1 小节；M1 全部关闭。
 
 ### M1-S1 项目骨架
 - **完成时间**：2026-08-07
@@ -77,6 +77,12 @@
 - **内容**：TUI 最小边界（readline 单行输入 + 滚动输出、流式渲染、Ctrl+C 中止、`/exit`）；slash 命令路由（/exit /help /model /cost /clear）；首次运行 key 引导（无 key 时交互提示输入并写 auth.json，stdin EOF 竞速防挂死）。
 - **证据**：SC-1.9 实测 PASS（`/help` 列命令、`/exit` 退出码 0）；commands/args 单测。
 - **对应**：FR-2.1/FR-8.1、SC-1.9
+
+### M1-S5 交互模式（P1：`@`/`!` 命令、中文宽度与 IME）
+- **完成时间**：2026-08-07
+- **内容**：输入展开 `expand.ts`——`@path` 文件引用、`!cmd` 命令注入，复用 readTool/runCommand（路径安全 + 超时 + 50KB 截断），`[文件]/[命令]` 标记内联；`width.ts`——`visibleWidth` 按码点计全角（中文/日文/emoji 不拆代理对）、`cursorCol`（IME 定位用列位置）、`truncateByWidth`（TUI 工具输出截断按列宽，不切全角）。
+- **证据**：`@a.txt 你好` 展开含 a.txt 内容（单测）；visibleWidth('你好')=4 等单测 11 条；TUI 输入循环先 expand 再 run。
+- **对应**：FR-2.1、SC-1.10（TUI 部分）
 
 ### M1-S6 print 模式
 - **完成时间**：2026-08-07
