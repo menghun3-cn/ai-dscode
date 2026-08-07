@@ -14,6 +14,8 @@ import { assembleSystemPrompt } from './prompt.js';
 import { SessionManager } from '../session/manager.js';
 import { buildContextEntries, branchPath } from '../session/context.js';
 import { newEntryId, type SessionEntry } from '../session/entries.js';
+import { EventBus } from '../extension/bus.js';
+import type { ExtensionToolDef } from '../extension/api.js';
 
 /** LLM client 最小接口：@dscode/ai 的 OpenAIClient 结构化满足，测试可 mock */
 export interface ChatStreamer {
@@ -31,6 +33,10 @@ export interface AgentSessionOptions {
   client: ChatStreamer;
   /** M3：按模型切换 client（跨 provider 时换协议 client；无则仅切 model id） */
   clientFactory?: (modelId: string) => ChatStreamer | undefined;
+  /** M4：扩展事件总线（缺省自建空总线） */
+  bus?: EventBus;
+  /** M4：扩展注册的工具（executeTool 未命中内置时回退）；可传 supplier 支持 /reload 后取最新 */
+  extTools?: ExtensionToolDef[] | (() => ExtensionToolDef[]);
   model?: string;
   maxTurns?: number;
   systemPromptExtra?: string;
@@ -60,6 +66,9 @@ export class AgentSession {
   private readonly sessionManager: SessionManager;
   private readonly persistEnabled: boolean;
   private readonly tools: ToolRegistry;
+  private readonly bus: EventBus;
+  private readonly extTools: ExtensionToolDef[];
+  private readonly extToolsSupplier?: () => ExtensionToolDef[];
   private client: ChatStreamer;
   private readonly clientFactory?: (modelId: string) => ChatStreamer | undefined;
   private modelId: string;
@@ -73,6 +82,13 @@ export class AgentSession {
   constructor(opts: AgentSessionOptions) {
     this.cwd = opts.cwd;
     this.tools = opts.tools;
+    this.bus = opts.bus ?? new EventBus();
+    if (typeof opts.extTools === 'function') {
+      this.extToolsSupplier = opts.extTools;
+      this.extTools = [];
+    } else {
+      this.extTools = opts.extTools ?? [];
+    }
     this.client = opts.client;
     this.clientFactory = opts.clientFactory;
     this.modelId = opts.model ?? 'deepseek-v4-flash';
@@ -100,6 +116,8 @@ export class AgentSession {
       const next = this.clientFactory(id);
       if (next) this.client = next;
     }
+    // M4：model_select 事件
+    void this.bus.emit('model_select', { model: id });
   }
 
   get signal(): AbortSignal {
@@ -210,6 +228,9 @@ export class AgentSession {
 
     this.messages.push({ role: 'user', content: input });
     this.pushEntry('user', { role: 'user', content: input });
+    // M4：扩展事件（before_agent_start / agent_start）
+    await this.bus.emit('before_agent_start', { input });
+    await this.bus.emit('agent_start', { input });
     yield { type: 'agent_start', input };
 
     // 累计所有 LLM 调用轮的 usage（tokens 数据源，供 TUI 显示）
@@ -224,22 +245,34 @@ export class AgentSession {
     for (let turn = 0; turn < this.maxTurns; turn++) {
       if (this.abortController.signal.aborted) {
         await this.persist();
+        await this.bus.emit('agent_settled', { reason: 'aborted', usage });
+        await this.bus.emit('agent_end', { reason: 'aborted' });
         yield { type: 'agent_settled', reason: 'aborted', usage };
         return;
       }
+      await this.bus.emit('turn_start', { turn });
 
-      // LLM 调用（流式）
+      // LLM 调用（流式）；tools = 内置 + 扩展工具（M4：模型需感知扩展工具才能调用）
+      const extTools = this.extToolsSupplier ? this.extToolsSupplier() : this.extTools;
+      const tools = [
+        ...this.tools.toOpenAITools(),
+        ...extTools.map((t) => ({
+          type: 'function' as const,
+          function: { name: t.name, description: t.description, parameters: t.parameters },
+        })),
+      ];
       let content = '';
       const toolCalls: ToolCall[] = [];
       const stream = this.client.streamChat({
         model: this.modelId,
         messages: [{ role: 'system', content: this.systemPrompt }, ...this.messages],
-        tools: this.tools.toOpenAITools(),
+        tools,
         signal: this.abortController.signal,
       });
       for await (const ev of stream) {
         if (ev.content) {
           content += ev.content;
+          await this.bus.emit('message_update', { content: ev.content });
           yield { type: 'message_update', content: ev.content };
         }
         if (ev.reasoningContent) {
@@ -268,24 +301,44 @@ export class AgentSession {
       // 收敛：无 tool_call → 结束
       if (toolCalls.length === 0) {
         await this.persist();
+        await this.bus.emit('agent_settled', { reason: 'no-tool-calls', usage });
+        await this.bus.emit('agent_end', { reason: 'no-tool-calls' });
         yield { type: 'agent_settled', reason: 'no-tool-calls', usage };
         return;
       }
 
-      // 先发出 tool_call 事件，再并行执行（事件设计见 events.ts / 原理-agentloop.md §8）
+      // 先发出 tool_call 事件（扩展可 block），再并行执行
+      const blocked: Array<{ tc: ToolCall; reason: string }> = [];
       for (const tc of toolCalls) {
         yield { type: 'tool_call', toolCallId: tc.id, toolName: tc.function.name, args: tc.function.arguments };
+        const verdict = await this.bus.emit('tool_call', {
+          toolCallId: tc.id,
+          toolName: tc.function.name,
+          args: tc.function.arguments,
+        });
+        if (verdict?.block) blocked.push({ tc, reason: verdict.reason ?? '被扩展拦截' });
       }
-      // 并行执行（错误隔离：单工具失败不连坐）
-      const outcomes = await Promise.all(toolCalls.map((tc) => this.executeTool(tc)));
+      // 并行执行（错误隔离：单工具失败不连坐）；被 block 的工具直接产出 isError 结果
+      const outcomes = await Promise.all(
+        toolCalls.map((tc) => {
+          const b = blocked.find((x) => x.tc.id === tc.id);
+          return b
+            ? Promise.resolve({ toolCallId: tc.id, toolName: tc.function.name, output: `[blocked] ${b.reason}`, isError: true })
+            : this.executeTool(tc);
+        }),
+      );
       for (const o of outcomes) {
         this.messages.push({ role: 'tool', tool_call_id: o.toolCallId, content: o.output });
         this.pushEntry('toolResult', { role: 'tool', content: o.output, toolCallId: o.toolCallId });
+        await this.bus.emit('tool_result', { toolCallId: o.toolCallId, toolName: o.toolName, output: o.output, isError: o.isError });
         yield { type: 'tool_result', ...o };
       }
+      await this.bus.emit('turn_end', { turn });
     }
 
     await this.persist();
+    await this.bus.emit('agent_settled', { reason: 'max-turns', usage });
+    await this.bus.emit('agent_end', { reason: 'max-turns' });
     yield { type: 'agent_settled', reason: 'max-turns', usage };
   }
 
@@ -294,14 +347,30 @@ export class AgentSession {
     const toolCallId = tc.id || `call_${Math.random().toString(36).slice(2, 10)}`;
     const toolName = tc.function.name;
     const tool = this.tools.get(toolName);
-    if (!tool) {
-      return { toolCallId, toolName, output: `未知工具: ${toolName}`, isError: true };
-    }
     let params: Record<string, unknown>;
     try {
       params = tc.function.arguments ? (JSON.parse(tc.function.arguments) as Record<string, unknown>) : {};
     } catch {
       return { toolCallId, toolName, output: `工具参数不是合法 JSON: ${tc.function.arguments}`, isError: true };
+    }
+    // M4：扩展注册的工具回退（未命中内置时；supplier 取最新，支持 /reload）
+    const extTools = this.extToolsSupplier ? this.extToolsSupplier() : this.extTools;
+    if (!tool) {
+      const ext = extTools.find((t) => t.name === toolName);
+      if (!ext) {
+        return { toolCallId, toolName, output: `未知工具: ${toolName}`, isError: true };
+      }
+      try {
+        const result = await ext.execute(params);
+        return { toolCallId, toolName, output: result.output, isError: !!result.isError };
+      } catch (err) {
+        return {
+          toolCallId,
+          toolName,
+          output: `扩展工具异常: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
+      }
     }
     try {
       const result = await tool.execute(toolCallId, params as never, {

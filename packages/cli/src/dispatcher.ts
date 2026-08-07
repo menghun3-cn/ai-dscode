@@ -51,7 +51,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
     return 0;
   }
 
-  const { session, authError } = await buildSession(args);
+  const { session, extManager, authError } = await buildSession(args);
   if (authError || !session) {
     // interactive 模式：SC-1.1 首次运行引导输入 key；print 模式直接报错（CI 不弹交互）
     if (mode === 'interactive') {
@@ -67,7 +67,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
         console.error(rebuilt.authError ?? '会话构建失败');
         return 1;
       }
-      return runInteractive(rebuilt.session);
+      return runInteractive(rebuilt.session, rebuilt.extManager);
     }
     console.error(authError ?? '会话构建失败');
     return 1;
@@ -77,7 +77,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
     return runPrint(session, args.printPrompt, args.positionals);
   }
   // interactive（TUI）
-  return runInteractive(session);
+  return runInteractive(session, extManager);
 }
 
 export { process };

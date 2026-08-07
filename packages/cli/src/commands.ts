@@ -42,6 +42,11 @@ export interface SlashCommandContext {
   setThinkingMode: (mode: 'stream' | 'fold' | 'off') => void;
   /** M3 P1：手动拉取并合并远端模型目录，返回摘要文本 */
   updateModelsStore: () => Promise<string>;
+  /** M4：扩展管理（/reload 热重载、/extensions 列出） */
+  extensions: {
+    reload: () => Promise<string>;
+    list: () => string;
+  };
   /** M2：会话操作（/resume /tree /fork /clone /name /export） */
   session: SlashSessionOps;
 }
@@ -56,7 +61,7 @@ export interface SlashResult {
 }
 
 /** 全部命令（/help 与补全共用） */
-export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
+export const COMMANDS = ['exit', 'quit', 'help', 'model', 'cost', 'clear', 'thinking', 'models-update', 'extensions', 'reload', 'resume', 'tree', 'fork', 'clone', 'name', 'export'] as const;
 
 export async function handleSlash(input: string, ctx: SlashCommandContext): Promise<SlashResult> {
   if (!input.startsWith('/')) {
@@ -82,6 +87,8 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /clear   清空当前会话消息',
           '  /thinking   reasoning 展示：stream/fold/off（SC-3.2）',
           '  /models-update  拉取并合并远端模型目录（FR-6.1）',
+          '  /extensions     列出已加载扩展与错误（M4）',
+          '  /reload         热重载扩展（改完即生效）',
           '  /tree    查看会话树；/tree <n> 跳到该节点改写分支',
           '  /fork <n>  从历史节点分叉出新会话（旧文件不变）',
           '  /clone   复制当前分支为新会话',
@@ -129,6 +136,13 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
     }
     case 'models-update': {
       const msg = await ctx.updateModelsStore();
+      return { handled: true, output: msg };
+    }
+    case 'extensions': {
+      return { handled: true, output: ctx.extensions.list() };
+    }
+    case 'reload': {
+      const msg = await ctx.extensions.reload();
       return { handled: true, output: msg };
     }
 

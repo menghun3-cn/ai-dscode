@@ -7,7 +7,7 @@
 
 import readline, { type Key } from 'node:readline';
 import process from 'node:process';
-import type { AgentEvent, AgentSession } from '@dscode/core';
+import type { AgentEvent, AgentSession, ExtensionManager } from '@dscode/core';
 import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { truncateByWidth } from './width.js';
@@ -107,7 +107,7 @@ export function statusText(opts: { model: string; cwd: string; usedTokens: numbe
   return `${opts.model} · ${opts.cwd} · ${fmtTokens(opts.usedTokens)}/${fmtTokens(opts.contextWindow)} tok (${pct}%)`;
 }
 
-export async function runInteractive(session: AgentSession): Promise<number> {
+export async function runInteractive(session: AgentSession, extManager?: ExtensionManager): Promise<number> {
   // M3：全部 provider 的模型（跨 provider 统一编号，/model 与 Ctrl+P 用）
   let availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
   let allModelDefs = PROVIDERS.flatMap((p) => p.models);
@@ -265,6 +265,27 @@ export async function runInteractive(session: AgentSession): Promise<number> {
       } catch (err) {
         return `模型目录拉取失败: ${err instanceof Error ? err.message : String(err)}`;
       }
+    },
+    // M4：扩展管理（/reload /extensions）
+    extensions: {
+      list: () => {
+        if (!extManager) return '未装配扩展管理器';
+        const apis = extManager.getApis();
+        const errors = extManager.getErrors();
+        const lines = apis.length > 0 ? apis.map((a) => `  ${a.getCommands().length > 0 ? `⚙ ` : ''}已加载（工具 ${a.getTools().length} · 命令 ${a.getCommands().length}）`) : [];
+        const errLines = errors.map((e) => `  ✗ ${e.file}: ${e.message}`);
+        return `扩展已加载 ${apis.length} 个${lines.length > 0 ? `:\n${lines.join('\n')}` : ''}${errLines.length > 0 ? `\n加载错误:\n${errLines.join('\n')}` : ''}`;
+      },
+      reload: async () => {
+        if (!extManager) return '未装配扩展管理器';
+        await extManager.loadAll();
+        const apis = extManager.getApis();
+        const errors = extManager.getErrors();
+        const toolCount = extManager.getTools().length;
+        const cmdCount = extManager.getCommands().length;
+        const errText = errors.length > 0 ? `；${errors.length} 个加载错误（/extensions 查看）` : '';
+        return `已热重载扩展：${apis.length} 个加载，工具 ${toolCount} · 命令 ${cmdCount}${errText}`;
+      },
     },
     // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {

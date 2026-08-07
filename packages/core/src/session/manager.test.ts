@@ -65,6 +65,7 @@ describe('SessionManager（原理-session.md §2/§5）', () => {
   it('list / latestId 按 mtime 倒序', async () => {
     const mgr = new SessionManager(tmp);
     const a = await mgr.create([makeEntry('user', { content: 'a' })]);
+    await new Promise((r) => setTimeout(r, 5)); // 确保 mtime 严格递增（避免同毫秒竞态）
     const b = await mgr.create([makeEntry('user', { content: 'b' })]);
     const list = await mgr.list();
     expect(list.map((m) => m.id)).toContain(a);

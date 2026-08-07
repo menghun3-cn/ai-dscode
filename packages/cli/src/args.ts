@@ -26,7 +26,7 @@ export interface CliArgs {
 }
 
 /** 版本号（与 packages/cli/package.json 同步；SC-6.2 验收用 --version） */
-export const DSCCODE_VERSION = '0.2.0';
+export const DSCCODE_VERSION = '0.3.0';
 
 export function parseArgs(argv: string[]): CliArgs {
   const { values, positionals } = nodeParseArgs({

@@ -1,11 +1,13 @@
 {
   "name": "@dscode/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Agent loop, tools, session, permission engine",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
@@ -15,6 +17,7 @@
   "dependencies": {
     "@dscode/ai": "workspace:*",
     "@sinclair/typebox": "^0.34.0",
-    "fast-glob": "^3.3.0"
+    "fast-glob": "^3.3.0",
+    "jiti": "^2.7.0"
   }
 }

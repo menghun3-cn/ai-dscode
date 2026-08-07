@@ -7,6 +7,7 @@ import { AgentSession, type ChatStreamer } from './session.js';
 import { AgentSessionRuntime } from './runtime.js';
 import { ToolRegistry } from '../tool.js';
 import { readTool } from '../tools/read.js';
+import { EventBus } from '../extension/bus.js';
 
 let tmp: string;
 let home: string;
@@ -279,6 +280,46 @@ describe('AgentSession（M1-S4）', () => {
     const events = [];
     for await (const ev of resumed.run('继续')) events.push(ev);
     expect(events.at(-1)?.type).toBe('agent_settled');
+  });
+
+  it('扩展工具回退：内置未命中时执行扩展工具（M4，SC-4.1）', async () => {
+    const extTools = [
+      {
+        name: 'greet',
+        description: '打招呼',
+        parameters: {},
+        execute: async (p: { name?: string }) => ({ output: `Hello, ${p.name ?? 'world'}!` }),
+      },
+    ];
+    const greetCall: ToolCall = { id: 'c1', type: 'function', function: { name: 'greet', arguments: '{"name":"Alice"}' } };
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([[{ toolCalls: [greetCall], finishReason: 'tool_calls' }], contentTurn('完成')]),
+      extTools,
+    });
+    const events = [];
+    for await (const ev of session.run('打招呼')) events.push(ev);
+    const result = events.find((e) => e.type === 'tool_result') as { isError: boolean; output: string };
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe('Hello, Alice!');
+  });
+
+  it('tool_call 事件可被扩展 block（验收：订阅 tool_call 并 block）', async () => {
+    const bus = new EventBus();
+    bus.on('tool_call', async (e) => (e.toolName === 'bash' ? { block: true, reason: '扩展禁止 bash' } : undefined));
+    const bashCall: ToolCall = { id: 'c1', type: 'function', function: { name: 'bash', arguments: '{"command":"rm -rf /"}' } };
+    const session = new AgentSession({
+      cwd: tmp,
+      tools: registryWithRead(),
+      client: scriptedClient([[{ toolCalls: [bashCall], finishReason: 'tool_calls' }], contentTurn('完成')]),
+      bus,
+    });
+    const events = [];
+    for await (const ev of session.run('跑命令')) events.push(ev);
+    const result = events.find((e) => e.type === 'tool_result') as { isError: boolean; output: string };
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('[blocked] 扩展禁止 bash');
   });
 
   it('/tree 语义：jumpTo 迁移激活分支，buildContextEntries 跟随（SC-2.3）', async () => {

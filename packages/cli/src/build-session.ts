@@ -16,11 +16,21 @@ import {
   syncModelsStore,
   type Provider,
 } from '@dscode/ai';
-import { AgentSessionRuntime, SessionManager, createBuiltinRegistry, type AgentSession, type ChatStreamer } from '@dscode/core';
+import {
+  AgentSessionRuntime,
+  EventBus,
+  ExtensionManager,
+  SessionManager,
+  createBuiltinRegistry,
+  type AgentSession,
+  type ChatStreamer,
+} from '@dscode/core';
 import type { CliArgs } from './args.js';
 
 export interface BuildSessionResult {
   session: AgentSession;
+  /** M4：扩展管理器（/reload /extensions 用） */
+  extManager?: ExtensionManager;
   /** 无可用 key 时的错误提示（SC-1.1：无配置时引导输入） */
   authError?: string;
 }
@@ -106,10 +116,30 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
   const client = clientFor(initialProvider, initialKey);
   const sessionId = await resolveSessionId(args);
 
+  // M4：装配扩展（事件总线 + 加载器 + 项目信任提示）
+  const bus = new EventBus();
+  const extManager = new ExtensionManager({
+    cwd: process.cwd(),
+    bus,
+    trustPrompt: async (cwd) => {
+      if (!process.stdin.isTTY) return false;
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        const answer = await rl.question(`此项目（${cwd}）有扩展，是否信任并加载？(y/N) `);
+        return /^y/i.test(answer.trim());
+      } finally {
+        rl.close();
+      }
+    },
+  });
+  await extManager.loadAll();
+
   const session = AgentSessionRuntime.create({
     cwd: process.cwd(),
     tools: createBuiltinRegistry(),
     client,
+    bus,
+    extTools: () => extManager.getTools(), // supplier：/reload 后新工具立即可用
     // /model 切换时：按目标模型所属 provider 换 client
     clientFactory: (modelId: string) => {
       const p = findProviderForModel(modelId);
@@ -120,7 +150,7 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
     sessionId,
   });
   await session.prepare();
-  return { session };
+  return { session, extManager };
 }
 
 /** 依赖树里 core 的 tools 注册表构建（显式引用避免摇树） */
