@@ -8,7 +8,8 @@
 import readline from 'node:readline';
 import process from 'node:process';
 import type { AgentEvent, AgentSession } from '@dscode/core';
-import { handleSlash, type SlashCommandContext } from './commands.js';
+import { deepseekModels } from '@dscode/ai';
+import { handleSlash, commandCompletions, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { truncateByWidth } from './width.js';
 
@@ -61,11 +62,14 @@ export function costText(model: string, usage: UsageStats): string {
 }
 
 export async function runInteractive(session: AgentSession): Promise<number> {
+  const availableModels = deepseekModels.map((m) => m.id);
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
     prompt: '\x1b[32mdscode>\x1b[0m ',
+    // 输入 / 或 /model 后 Tab 提示候选（readline 会在多候选时打印列表）
+    completer: (line: string) => [commandCompletions(line, availableModels), line],
   });
 
   let model = session.model;
@@ -76,6 +80,7 @@ export async function runInteractive(session: AgentSession): Promise<number> {
     get model() {
       return model;
     },
+    availableModels,
     setModel: (id) => {
       model = id;
       session.setModel(id);

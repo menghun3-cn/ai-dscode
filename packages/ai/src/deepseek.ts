@@ -12,6 +12,15 @@ export const deepseekBaseUrl = 'https://api.deepseek.com';
 /** 内置 DeepSeek 模型目录（价格需与官方定价同步，供 /cost 计费） */
 export const deepseekModels: ModelDef[] = [
   {
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    reasoning: true,
+    contextWindow: 65536,
+    maxTokens: 8192,
+    cost: { input: 0.27, output: 1.1, cacheRead: 0.07, cacheWrite: 0.27 },
+    input: ['text'],
+  },
+  {
     id: 'deepseek-chat',
     name: 'DeepSeek Chat',
     reasoning: false,
