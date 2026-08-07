@@ -6,7 +6,7 @@
  * - cwd 可配（默认 ctx.cwd，禁止逃逸出工作目录）
  */
 
-import { spawn, execFile } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { Type, type Static } from '@sinclair/typebox';
 import type { Tool } from '../tool.js';
 import { tryResolve } from '../util/path.js';
@@ -16,6 +16,42 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 300;
 /** 杀进程后若 close 仍未触发，强制返回的兜底时长 */
 const FORCE_RESOLVE_MS = 2_000;
+
+/**
+ * 解析可用的 shell（进程内缓存）：
+ * 1. DSCODE_SHELL / SHELL 环境变量显式指定
+ * 2. `bash`（PATH 中，Git Bash）
+ * 3. Windows 常见 Git Bash 安装路径
+ * 4. `sh` 兜底
+ * 找不到时返回 null，由 runCommand 报告明确错误。
+ */
+let cachedShell: string | null | undefined;
+export function resolveShell(): string | null {
+  if (cachedShell !== undefined) return cachedShell;
+  const candidates = [
+    process.env['DSCODE_SHELL'],
+    process.env['SHELL'],
+    'bash',
+    // Windows Git Bash 常见安装位置（PATH 里没有 bash 时的兜底）
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+    'sh',
+  ].filter((s): s is string => Boolean(s));
+  for (const shell of candidates) {
+    try {
+      const r = spawnSync(shell, ['--version'], { stdio: 'ignore' });
+      if (!r.error) {
+        cachedShell = shell;
+        return shell;
+      }
+    } catch {
+      // 该候选不可用，继续下一个
+    }
+  }
+  cachedShell = null;
+  return null;
+}
 
 export const bashParams = Type.Object({
   command: Type.String({ description: '要执行的 shell 命令' }),
@@ -32,6 +68,8 @@ export interface BashResult {
   signal: string | null;
   truncated: boolean;
   timedOut: boolean;
+  /** spawn 失败时的真实错误（如 bash 未找到的 ENOENT） */
+  spawnError?: string;
 }
 
 export const bashTool: Tool<BashParams> = {
@@ -49,9 +87,10 @@ export const bashTool: Tool<BashParams> = {
     const result = await runCommand(params.command, cwdResolved.path, timeoutMs, ctx.signal);
 
     const output = [
+      result.spawnError ? `[shell 启动失败]\n${result.spawnError}` : '',
       result.stdout ? `[stdout]\n${result.stdout}` : '',
       result.stderr ? `[stderr]\n${result.stderr}` : '',
-      `[exit=${result.exitCode ?? 'killed'}${result.signal ? ` signal=${result.signal}` : ''}${result.timedOut ? ' timeout' : ''}]`,
+      result.spawnError ? '' : `[exit=${result.exitCode ?? 'killed'}${result.signal ? ` signal=${result.signal}` : ''}${result.timedOut ? ' timeout' : ''}]`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -63,8 +102,9 @@ export const bashTool: Tool<BashParams> = {
         signal: result.signal,
         truncated: result.truncated,
         timedOut: result.timedOut,
+        spawnError: result.spawnError,
       },
-      isError: result.exitCode !== 0 || result.timedOut,
+      isError: result.exitCode !== 0 || result.timedOut || Boolean(result.spawnError),
     };
   },
 };
@@ -77,7 +117,20 @@ export function runCommand(
   externalSignal?: AbortSignal,
 ): Promise<BashResult> {
   return new Promise((resolve) => {
-    const child = spawn('bash', ['-c', command], {
+    const shell = resolveShell();
+    if (!shell) {
+      resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        signal: null,
+        truncated: false,
+        timedOut: false,
+        spawnError: '未找到可用的 shell（bash/sh）。请安装 Git Bash 并加入 PATH，或设置 DSCODE_SHELL 指定 shell 路径。',
+      });
+      return;
+    }
+    const child = spawn(shell, ['-c', command], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -107,13 +160,13 @@ export function runCommand(
     let timer: NodeJS.Timeout | undefined;
     let forceTimer: NodeJS.Timeout | undefined;
 
-    const finish = (exitCode: number | null, signal: string | null) => {
+    const finish = (exitCode: number | null, signal: string | null, spawnError?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(forceTimer);
       externalSignal?.removeEventListener('abort', onAbort);
-      resolve({ stdout, stderr, exitCode, signal, truncated, timedOut });
+      resolve({ stdout, stderr, exitCode, signal, truncated, timedOut, spawnError });
     };
 
     /** 杀进程树：Windows 下 taskkill /T /F 连带孙进程，否则 stdout 管道被孙进程持有、close 不触发 */
@@ -143,8 +196,8 @@ export function runCommand(
       timer.unref?.();
     });
     child.on('error', (err) => {
-      // spawn 失败（如 bash 不存在）
-      finish(null, null);
+      // spawn 失败（如 shell 启动被拒）：报告真实错误，而不是笼统 killed
+      finish(null, null, err.message);
     });
     child.on('close', (code, signal) => finish(code, signal));
   });
