@@ -13,6 +13,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@dscode/ai": "workspace:*"
+    "@dscode/ai": "workspace:*",
+    "@sinclair/typebox": "^0.34.0",
+    "fast-glob": "^3.3.0"
   }
 }
