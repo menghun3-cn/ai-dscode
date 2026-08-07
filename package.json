@@ -1,6 +1,6 @@
 {
   "name": "dscode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "DeepSeek-first, multi-provider AI coding assistant for the terminal (monorepo root)",

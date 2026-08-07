@@ -20,4 +20,4 @@ export * from './agent/prompt.js';
 export * from './agent/session.js';
 export * from './agent/runtime.js';
 
-export const CORE_PACKAGE_VERSION = '0.1.0';
+export const CORE_PACKAGE_VERSION = '0.1.1';

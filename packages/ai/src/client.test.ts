@@ -178,4 +178,19 @@ describe('空闲超时（回归：长输出不误杀）', () => {
       }
     }).rejects.toThrow(/停滞/);
   });
+
+  it('AbortError 不重试（中止直接抛，避免级联同样的错）', async () => {
+    let calls = 0;
+    const fetchImpl: FetchLike = () => {
+      calls += 1;
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    };
+    const c = new OpenAIClient({ baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', fetchImpl, maxRetries: 3 });
+    await expect(async () => {
+      for await (const _ of c.streamChat({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })) {
+        // drain
+      }
+    }).rejects.toThrow(/请求中止/);
+    expect(calls).toBe(1); // 不重试
+  });
 });

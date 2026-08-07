@@ -54,7 +54,7 @@ export class OpenAIClient {
     return typeof this.apiKey === 'function' ? this.apiKey() : this.apiKey;
   }
 
-  /** 429/5xx 指数退避重试（含 Retry-After 尊重） */
+  /** 429/5xx 指数退避重试（含 Retry-After 尊重）；AbortError 不重试 */
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
     let attempt = 0;
     for (;;) {
@@ -62,6 +62,10 @@ export class OpenAIClient {
       try {
         res = await this.fetchImpl(url, init);
       } catch (err) {
+        // 中止（AbortError / 信号已中止）：不重试——重试复用的仍是已中止的 signal，只会级联同样的错
+        if (isAbortError(err) || init.signal?.aborted) {
+          throw new ApiError(`请求中止: ${String(err)}`);
+        }
         // 网络层错误：可重试
         if (attempt < this.maxRetries) {
           attempt += 1;
@@ -205,6 +209,11 @@ export class OpenAIClient {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** 判断是否为中止错误（fetch 因 AbortSignal 中止时抛 DOMException AbortError） */
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
 }
 
 /**

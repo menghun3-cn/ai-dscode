@@ -47,7 +47,7 @@ export class AgentSession {
   private readonly maxTurns: number;
   private readonly systemPromptExtra?: string;
   private readonly debug: boolean;
-  private readonly abortController = new AbortController();
+  private abortController = new AbortController();
   private disposed = false;
   private systemPrompt = '';
 
@@ -104,6 +104,12 @@ export class AgentSession {
   async *run(input: string): AsyncGenerator<AgentEvent> {
     if (this.disposed) throw new Error('session 已 dispose');
     if (!this.systemPrompt) await this.prepare();
+
+    // 上次 abort（Ctrl+C / 超时中止）只影响当时那轮：每次 run 换全新 AbortController，
+    // 避免一次性信号污染后续对话（修复"中止后再次对话一直报错"）
+    if (this.abortController.signal.aborted) {
+      this.abortController = new AbortController();
+    }
 
     this.messages.push({ role: 'user', content: input });
     yield { type: 'agent_start', input };

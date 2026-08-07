@@ -1,6 +1,6 @@
 {
   "name": "@dscode/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "CLI entry: interactive TUI / print / json / rpc modes, slash commands",
   "main": "./dist/index.js",

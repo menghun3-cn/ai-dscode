@@ -218,4 +218,15 @@ describe('AgentSession（M1-S4）', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('JSON');
   });
+
+  it('abort 后再次 run 可正常对话（新 AbortController，不被上一次中止污染）', async () => {
+    const session = new AgentSession({ cwd: tmp, tools: registryWithRead(), client: scriptedClient([contentTurn('你好')]) });
+    // 第一轮被中止（Ctrl+C 场景）
+    session.abort();
+    // 第二轮应正常走完，而不是立刻 agent_settled aborted
+    const events = [];
+    for await (const ev of session.run('继续')) events.push(ev);
+    expect(events.at(-1)).toEqual({ type: 'agent_settled', reason: 'no-tool-calls', usage: {} });
+    expect(events.filter((e) => e.type === 'message_update')).toHaveLength(1);
+  });
 });
