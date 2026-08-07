@@ -43,7 +43,7 @@ export class AgentSession {
   readonly cwd: string;
   private readonly tools: ToolRegistry;
   private readonly client: ChatStreamer;
-  private readonly model: string;
+  private modelId: string;
   private readonly maxTurns: number;
   private readonly systemPromptExtra?: string;
   private readonly debug: boolean;
@@ -55,14 +55,31 @@ export class AgentSession {
     this.cwd = opts.cwd;
     this.tools = opts.tools;
     this.client = opts.client;
-    this.model = opts.model ?? 'deepseek-chat';
+    this.modelId = opts.model ?? 'deepseek-chat';
     this.maxTurns = opts.maxTurns ?? 50;
     this.systemPromptExtra = opts.systemPromptExtra;
     this.debug = opts.debug ?? process.env.DSCODE_DEBUG === '1';
   }
 
+  /** 当前模型 id（/model 查询与切换，M1-S5） */
+  get model(): string {
+    return this.modelId;
+  }
+
+  setModel(id: string): void {
+    this.modelId = id;
+  }
+
   get signal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /**
+   * 中止当前运行（Ctrl+C 中断，SC-1.9）。
+   * 只中止不 dispose，会话可继续使用；单次中止后 abortController 不可复用。
+   */
+  abort(): void {
+    this.abortController.abort();
   }
 
   dispose(): void {
@@ -101,7 +118,7 @@ export class AgentSession {
       let content = '';
       const toolCalls: ToolCall[] = [];
       const stream = this.client.streamChat({
-        model: this.model,
+        model: this.modelId,
         messages: [{ role: 'system', content: this.systemPrompt }, ...this.messages],
         tools: this.tools.toOpenAITools(),
         signal: this.abortController.signal,
