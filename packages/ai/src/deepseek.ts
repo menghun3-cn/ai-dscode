@@ -39,7 +39,7 @@ export const deepseekProvider: Provider = {
   apiKey: async () => {
     const resolved = await resolveApiKey();
     if (!resolved) {
-      throw new Error('未找到 DeepSeek API key：请配置 --api-key、auth.json 或 DEEPSEEK_API_KEY');
+      throw new Error('未找到 DeepSeek API key：请配置 --api-key、auth.json 或 DSCODE_API_KEY');
     }
     return resolved.key;
   },

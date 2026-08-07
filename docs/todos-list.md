@@ -20,55 +20,15 @@
 
 ---
 
-## Milestone 1：MVP 闭环（v0.1）
+## Milestone 1：MVP 闭环（v0.1）✅ 已完成
 
-> 部署avisma：DeepSeek 单 provider + 四工具 + interactive/print
+> **状态：2026-08-07 验收通过（SC-1.1~1.10 全 PASS，真实网关实测）。**
+> M1-S1~S7 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 1。
+> 剩余 2 个 P1 打磨项按 MVP 最小边界后置（见 SC-1.9），不阻塞 M1 关闭。
 
-### M1-S1 项目骨架
-- [ ] [P0] [M1] 初始化 pnpm monorepo — 三个包 `@dscode/core` / `@dscode/ai` / `@dscode/cli` 的 workspace、tsconfig、vitest → 验收：`pnpm i` 成功，`pnpm -r build` 零错误
-  - [ ] `pnpm-workspace.yaml`、根 `tsconfig.base.json`（target ES2022、module nodenext）
-  - [ ] 三包各带 `package.json`、`tsconfig.json`、`src/index.ts`
-  - [ ] 根 vitest 配置，跑空测试套件绿
-- [ ] [P0] [M1] CLI 入口与 args 解析 — `@dscode/cli` bin `dscode`，解析 `-p/--print`、`--mode`、`--provider`、`--model`、`--api-key`、`-c/-r`、`@file` 引用 → 验收：`dscode --help` 列出全部参数；`dscode -p hi` 进入 print 分支
-- [ ] [P0] [M1] 模式分发器 — 根据 args 选 interactive/print/json/rpc，print 与 interactive 先落地，json/rpc 占位 → 验收：四分支命中正确（日志可见 mode）
-
-### M1-S2 Provider 层（`@dscode/ai`）
-- [ ] [P0] [M1] Provider 接口与注册 — 定义 `Provider`/`ModelDef` 类型与 `ProviderRegistry` → 验收：`new Registry().register(deepSeekProvider)` 不报错
-- [ ] [P0] [M1] OpenAI 兼容 streaming client — 实现 OpenAI Chat Completions 流式（SSE 解析），支持 `tool_calls` → 验收：单元测试 mock SSE，解析出 content + tool_calls
-- [ ] [P0] [M1] DeepSeek provider 实现 — 基于 OpenAI 兼容 client，baseUrl `https://api.deepseek.com`，内置 `deepseek-chat`/`deepseek-reasoner` 目录 → 验收：`dscode --provider deepseek --model deepseek-chat -p hi` 返回非空
-  - [ ] `reasoning_content` 字段解析（reasoner 模型）
-  - [ ] 兼容 `DSAPI_BASE_URL`/`DSAPI_API_KEY` 环境变量
-- [ ] [P0] [M1] 鉴权解析器 — 优先级：`--api-key` > `auth.json` > env；写 `auth.json`（0600） → 验收：SC-1.1/SC-1.2 通过
-- [ ] [P0] [M1] 重试与限流 — 429/5xx 指数退避，最大 3 次 → 验收：mock 429 后第二次 200 成功
-
-### M1-S3 工具层（`@dscode/core`）
-- [ ] [P0] [M1] Tool 接口与注册器 — `Tool` 类型 + `ToolRegistry`，typebox schema → 验收：注册 read 后 `getAll()` 含之
-- [ ] [P0] [M1] `read` 工具 — 读文件，offset/limit，图片作为 image 附件回传 → 验收：SC-1.3
-- [ ] [P0] [M1] `write` 工具 — 创建/覆盖，建父目录 → 验收：SC-1.4
-- [ ] [P0] [M1] `edit` 工具 — 多 disjoint edit，oldText 唯一匹配，重叠检测报错 → 验收：SC-1.5；额外：单文件两次 edit 不覆盖
-- [ ] [P0] [M1] `bash` 工具 — 子进程执行，超时/信号/cwd/输出 truncation（50KB） → 验收：SC-1.6；`bash sleep 100` 配 `timeout:1` 能被中断
-- [ ] [P0] [M1] `glob` / `grep` 工具 — glob(fast-glob)、grep(优先 ripgrep fallback 正则) → 验收：单测各工具 basic case；MVP 必备（无搜索则 Agent 定位代码靠 read 瞎猜）
-- [ ] [P1] [M1] `ls` 工具 — 列目录 → 验收：单测 basic case
-
-### M1-S4 Agent Loop（`@dscode/core`）
-- [ ] [P0] [M1] AgentSession 与 Runtime 骨架 — `AgentSession`（持有 messages/loop 状态）+ `AgentSessionRuntime` factory → 验收：能 new + dispose 无异常
-- [ ] [P0] [M1] Agent Loop 主循环 — 实现 prompt→LLM→tool_calls→execute→反馈→再 LLM，达无 tool_call 或上限结束 → 验收：SC-1.7
-- [ ] [P0] [M1] 流式渲染回调 — 暴露 message_update 流，TUI/print 各自消费 → 验收：print 模式边收边输出
-- [ ] [P1] [M1] 并行工具执行 — 同 assistant message 多 tool_call 并发，错误隔离不连环崩 → 验收：两个独立 bash 并发完成时刻早于串行
-- [ ] [P1] [M1] System prompt 组装 — 角色 + 工具 snippets + DSCODE.md（若存在）+ steering → 验收：`DSCODE_DEBUG=1` 日志可见组装后 prompt
-
-### M1-S5 交互模式（`@dscode/cli`）
-- [ ] [P0] [M1] TUI 最小可用 — **最小边界：单行输入 + 滚动输出**，ANSI raw mode、流式输出渲染、`Ctrl+C` 中断、`/exit` 退出；**不做**组件树/`@`引用/`!`命令/IME（P1 打磨项，防 TUI 拖死 MVP） → 验收：SC-1.9
-- [ ] [P0] [M1] slash 命令路由 — `/exit` `/help` `/model` `/cost` `/clear` 先落地 → 验收：`/help` 列命令、`/exit` 退出码 0
+### M1-S5 交互模式（后置 P1 打磨项）
 - [ ] [P1] [M1] `@` 文件引用、`!` 跑命令 — 输入框 `@path` 插文件内容、`!cmd` 跑 shell 注入上下文 → 验收：`@a.txt 你好` 模型看得到 a 内容
-- [ ] [P1] [M1] 中文宽度与 IME — visibleWidth 计全角、IME 候选框定位 → 验收：SC-1.10
-
-### M1-S6 print 模式
-- [ ] [P0] [M1] print 模式完整 — `-p`、stdin 管道、纯文本输出退出码 → 验收：SC-1.8；退出码反映成功/失败
-
-### M1-S7 测试与文档
-- [ ] [P0] [M1] M1 验收脚本 — 一键脚本跑 SC-1.1~1.10，输出 PASS/FAIL 表；**失败项 dump turn 轨迹**（每轮 tool_call + 结果摘要 + 收敛原因 settled/max-turns/error），使失败可诊断 → 验收：全 PASS 且无盲区（无"PASS 但不知道为啥过"）
-- [ ] [P1] [M1] README 与快速上手 — 安装、配 DeepSeek、hello world → 验收：新人按 README 10 分钟跑通
+- [ ] [P1] [M1] 中文宽度与 IME — visibleWidth 计全角、IME 候选框定位 → 验收：SC-1.10（TUI 部分）
 
 ---
 

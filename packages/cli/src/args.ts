@@ -50,7 +50,8 @@ export function parseArgs(argv: string[]): CliArgs {
     printPrompt: typeof values['print'] === 'string' ? values['print'] : undefined,
     mode,
     provider: (values['provider'] as string | undefined) ?? 'deepseek',
-    model: (values['model'] as string | undefined) ?? 'deepseek-chat',
+    // --model > DSCODE_MODEL env > 默认 deepseek-v4-flash
+    model: (values['model'] as string | undefined) ?? process.env['DSCODE_MODEL'] ?? 'deepseek-v4-flash',
     apiKey: values['api-key'] as string | undefined,
     cont: values['continue'] === true,
     resume: values['resume'] === true,
@@ -71,11 +72,18 @@ export const HELP_TEXT = `dscode — DeepSeek 优先的命令行 AI 编码助手
   -p, --print <文本>       print 模式并直接执行该 prompt（支持 stdin 管道 -）
   -m, --mode <模式>        interactive / print / json / rpc（默认 interactive）
       --provider <id>      模型提供商（默认 deepseek）
-      --model <id>         模型 id（默认 deepseek-chat）
+      --model <id>         模型 id（默认 deepseek-v4-flash，可用 DSCODE_MODEL 覆盖）
       --api-key <key>      显式 API key（优先级最高）
   -c, --continue           继续最近会话（v0.2 落地）
   -r, --resume             浏览会话（v0.2 落地）
   -h, --help               显示帮助
 
-鉴权优先级: --api-key > ~/.dscode/auth.json > DEEPSEEK_API_KEY
+环境变量:
+  DSCODE_API_KEY            API key（默认空；兼容 DEEPSEEK_API_KEY/DSAPI_API_KEY）
+  DSCODE_MODEL              默认模型（默认 deepseek-v4-flash）
+  DSCODE_BASE_URL           网关地址（默认 https://api.deepseek.com；兼容 DSAPI_BASE_URL）
+  DSCODE_HOME               数据目录（默认 ~/.dscode）
+  DSCODE_DEBUG=1            DEBUG 日志
+
+鉴权优先级: --api-key > ~/.dscode/auth.json > DSCODE_API_KEY
 `;

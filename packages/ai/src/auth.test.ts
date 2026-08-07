@@ -30,8 +30,12 @@ describe('resolveApiKey 优先级：--api-key > auth.json > env', () => {
     expect(r).toEqual({ key: 'sk-from-file', source: 'file' });
   });
 
-  it('env 兜底：DEEPSEEK_API_KEY / DSAPI_API_KEY', async () => {
+  it('env 兜底：DSCODE_API_KEY / DEEPSEEK_API_KEY / DSAPI_API_KEY', async () => {
     const authFile = await tmpAuthFile();
+    expect(await resolveApiKey({ authFile, env: { DSCODE_API_KEY: 'sk-dscode' } })).toEqual({
+      key: 'sk-dscode',
+      source: 'env',
+    });
     expect(await resolveApiKey({ authFile, env: { DEEPSEEK_API_KEY: 'sk-env' } })).toEqual({
       key: 'sk-env',
       source: 'env',
@@ -73,8 +77,12 @@ describe('saveAuthKey', () => {
 });
 
 describe('resolveBaseUrl', () => {
-  it('DSAPI_BASE_URL 覆盖默认网关（FR-1.3）', () => {
-    expect(resolveBaseUrl({ DSAPI_BASE_URL: 'https://proxy.example.com' })).toBe('https://proxy.example.com');
+  it('DSCODE_BASE_URL 覆盖默认网关（FR-1.3）', () => {
+    expect(resolveBaseUrl({ DSCODE_BASE_URL: 'https://proxy.example.com' })).toBe('https://proxy.example.com');
     expect(resolveBaseUrl({})).toBe('https://api.deepseek.com');
+  });
+
+  it('兼容旧变量 DSAPI_BASE_URL', () => {
+    expect(resolveBaseUrl({ DSAPI_BASE_URL: 'https://legacy.example.com' })).toBe('https://legacy.example.com');
   });
 });

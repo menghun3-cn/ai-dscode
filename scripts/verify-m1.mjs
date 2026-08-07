@@ -6,7 +6,7 @@
  *
  * 用法：
  *   node scripts/verify-m1.mjs                  # 无 key：SC-1.1 实测，其余 SKIP
- *   DSCCODE_TEST_KEY=sk-... node scripts/verify-m1.mjs   # 全量实测
+ *   DSCODE_API_KEY=sk-... node scripts/verify-m1.mjs   # 全量实测
  *
  * 前置：先 `pnpm -r build`（spawn 的是 dist 产物）。
  */
@@ -22,15 +22,15 @@ const REPO = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(REPO, 'packages', 'cli', 'dist', 'index.js');
 
 const key =
-  process.env['DSCCODE_TEST_KEY'] ??
+  process.env['DSCODE_API_KEY'] ??
   process.env['DEEPSEEK_API_KEY'] ??
   (() => {
     const i = process.argv.indexOf('--api-key');
     return i > -1 ? process.argv[i + 1] : undefined;
   })();
 
-/** 模型可配置（本地网关/代理常只启用特定模型，如 deepseek-v4-flash） */
-const model = process.env['DSCCODE_TEST_MODEL'] ?? 'deepseek-chat';
+/** 模型可配置（本地网关/代理常只启用特定模型；默认 deepseek-v4-flash） */
+const model = process.env['DSCODE_MODEL'] ?? 'deepseek-v4-flash';
 
 const results = [];
 
@@ -109,14 +109,14 @@ async function sc11() {
   const sb = await makeSandbox();
   try {
     // 1a. 无任何配置 → 提示输入 key（stdin 空 → 退出）
-    const r1 = await runCli([], { env: { DSCODE_HOME: sb.dir, DEEPSEEK_API_KEY: '', DSAPI_API_KEY: '' } });
+    const r1 = await runCli([], { env: { DSCODE_HOME: sb.dir, DSCODE_API_KEY: '', DEEPSEEK_API_KEY: '', DSAPI_API_KEY: '' } });
     if (r1.code !== 1 || !r1.stdout.includes('未找到 DeepSeek API key')) {
       record('SC-1.1', '启动与鉴权', 'FAIL', `无配置应提示输入 key（code=${r1.code}）`);
       return;
     }
     // 1b. 输入 key → auth.json 存在、内容合规、0600（Windows 查 ACL 由 saveAuthKey 尽力处理）
     const r2 = await runCli([], {
-      env: { DSCODE_HOME: sb.dir, DEEPSEEK_API_KEY: '', DSAPI_API_KEY: '' },
+      env: { DSCODE_HOME: sb.dir, DSCODE_API_KEY: '', DEEPSEEK_API_KEY: '', DSAPI_API_KEY: '' },
       input: 'sk-verify-test\n',
     });
     const authFile = path.join(sb.dir, 'auth.json');
@@ -144,10 +144,10 @@ async function sc11() {
 
 /** SC-1.2：环境变量鉴权（不读 auth 文件直接成功） */
 async function sc12() {
-  if (!key) return record('SC-1.2', '环境变量鉴权', 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record('SC-1.2', '环境变量鉴权', 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
-    const r = await runCli(['-p', '回复 ok'], { env: { DEEPSEEK_API_KEY: key } });
+    const r = await runCli(['-p', '回复 ok'], { env: { DSCODE_API_KEY: key } });
     r.stdout.trim() && r.code === 0 ? record('SC-1.2', '环境变量鉴权', 'PASS', `exit=${r.code}`) : record('SC-1.2', '环境变量鉴权', 'FAIL', `exit=${r.code}`);
   } finally {
     await sb.cleanup();
@@ -156,14 +156,14 @@ async function sc12() {
 
 /** SC-1.3~1.6：四个工具 */
 async function scTool(prefix, files, prompt, check, name) {
-  if (!key) return record(prefix, name, 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record(prefix, name, 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
     for (const [f, c] of Object.entries(files)) {
       await fs.mkdir(path.dirname(path.join(sb.dir, f)), { recursive: true });
       await fs.writeFile(path.join(sb.dir, f), c, 'utf8');
     }
-    const r = await runCli(['-p', prompt], { cwd: sb.dir, env: { DEEPSEEK_API_KEY: key } });
+    const r = await runCli(['-p', prompt], { cwd: sb.dir, env: { DSCODE_API_KEY: key } });
     const ok = await check(sb.dir, r);
     ok ? record(prefix, name, 'PASS', `exit=${r.code}`) : record(prefix, name, 'FAIL', await trajectory(prompt, sb.dir));
   } finally {
@@ -182,7 +182,7 @@ async function trajectory(prompt, cwd) {
 
 /** SC-1.7：Agent Loop 多轮——跑 npm test 失败就修到通过 */
 async function sc17() {
-  if (!key) return record('SC-1.7', 'Agent Loop 多轮', 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record('SC-1.7', 'Agent Loop 多轮', 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
     await fs.writeFile(
@@ -222,10 +222,10 @@ async function sc17() {
 
 /** SC-1.8：print 模式 stdin 管道 */
 async function sc18() {
-  if (!key) return record('SC-1.8', 'print 模式管道', 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record('SC-1.8', 'print 模式管道', 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
-    const r = await runCli(['-p', '-'], { cwd: sb.dir, env: { DEEPSEEK_API_KEY: key }, input: '总结这句话' });
+    const r = await runCli(['-p', '-'], { cwd: sb.dir, env: { DSCODE_API_KEY: key }, input: '总结这句话' });
     r.stdout.trim() ? record('SC-1.8', 'print 模式管道', 'PASS', `exit=${r.code}`) : record('SC-1.8', 'print 模式管道', 'FAIL', `exit=${r.code} stdout 空`);
   } finally {
     await sb.cleanup();
@@ -234,10 +234,10 @@ async function sc18() {
 
 /** SC-1.9：interactive 最小可用（自动化：起 TUI → 输入 /help → 非零退出或正常关闭） */
 async function sc19() {
-  if (!key) return record('SC-1.9', 'interactive 基本可用', 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record('SC-1.9', 'interactive 基本可用', 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
-    const r = await runCli([], { cwd: sb.dir, env: { DEEPSEEK_API_KEY: key }, input: '/help\n/exit\n', timeoutMs: 20_000 });
+    const r = await runCli([], { cwd: sb.dir, env: { DSCODE_API_KEY: key }, input: '/help\n/exit\n', timeoutMs: 20_000 });
     const helpOk = r.stdout.includes('/exit') && r.stdout.includes('/help');
     helpOk ? record('SC-1.9', 'interactive 基本可用', 'PASS', `exit=${r.code}`) : record('SC-1.9', 'interactive 基本可用', 'FAIL', `exit=${r.code}`);
   } finally {
@@ -247,10 +247,10 @@ async function sc19() {
 
 /** SC-1.10：中文回退 */
 async function sc110() {
-  if (!key) return record('SC-1.10', '中文回退', 'SKIP', '需要 DEEPSEEK_API_KEY');
+  if (!key) return record('SC-1.10', '中文回退', 'SKIP', '需要 DSCODE_API_KEY');
   const sb = await makeSandbox();
   try {
-    const r = await runCli(['-p', '用中文回答：什么是闭包'], { cwd: sb.dir, env: { DEEPSEEK_API_KEY: key } });
+    const r = await runCli(['-p', '用中文回答：什么是闭包'], { cwd: sb.dir, env: { DSCODE_API_KEY: key } });
     // 中文不截断/错位：输出非空且含中文字符
     const hasCjk = /[\u4e00-\u9fff]/.test(r.stdout);
     hasCjk ? record('SC-1.10', '中文回退', 'PASS', '含中文输出') : record('SC-1.10', '中文回退', 'FAIL', `stdout 无中文: ${r.stdout.slice(0, 120)}`);

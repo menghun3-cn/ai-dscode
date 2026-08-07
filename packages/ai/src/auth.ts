@@ -2,7 +2,8 @@
  * 鉴权解析器（需求文档 FR-1、成功标准 SC-1.1/SC-1.2）。
  * 优先级：`--api-key` > auth.json > 环境变量。
  * auth.json 格式：{"deepseek": {"type": "api_key", "key": "sk-..."}}，权限 0600。
- * 兼容 DSAPI_API_KEY / DSAPI_BASE_URL（用户既有环境，FR-1.3）。
+ * 环境变量：`DSCODE_API_KEY`（主）、`DSCODE_BASE_URL`（主，默认官方网关）；
+ * 兼容 `DEEPSEEK_API_KEY` / `DSAPI_API_KEY` / `DSAPI_BASE_URL`（用户既有环境，FR-1.3）。
  */
 
 import { promises as fs } from 'node:fs';
@@ -32,7 +33,7 @@ function defaultAuthFile(env: Record<string, string | undefined> = process.env):
   return path.join(os.homedir(), '.dscode', 'auth.json');
 }
 
-/** 解析 API key：--api-key > auth.json > env（DEEPSEEK_API_KEY / DSAPI_API_KEY） */
+/** 解析 API key：--api-key > auth.json > env（DSCODE_API_KEY，兼容 DEEPSEEK_API_KEY/DSAPI_API_KEY） */
 export async function resolveApiKey(opts: AuthResolveOptions = {}): Promise<AuthResult | undefined> {
   // 1. CLI --api-key
   if (opts.cliApiKey) return { key: opts.cliApiKey, source: 'cli' };
@@ -48,9 +49,9 @@ export async function resolveApiKey(opts: AuthResolveOptions = {}): Promise<Auth
     // 文件不存在或损坏：落到 env
   }
 
-  // 3. 环境变量（DeepSeek 兼容：DEEPSEEK_API_KEY 或 DSAPI_API_KEY）
+  // 3. 环境变量（主 DSCODE_API_KEY；兼容 DEEPSEEK_API_KEY / DSAPI_API_KEY）
   const env = opts.env ?? process.env;
-  const envKey = env['DEEPSEEK_API_KEY'] ?? env['DSAPI_API_KEY'];
+  const envKey = env['DSCODE_API_KEY'] ?? env['DEEPSEEK_API_KEY'] ?? env['DSAPI_API_KEY'];
   if (envKey) return { key: envKey, source: 'env' };
 
   return undefined;
@@ -79,9 +80,9 @@ export async function saveAuthKey(opts: AuthSaveOptions): Promise<string> {
   return authFile;
 }
 
-/** 解析 baseUrl：DSAPI_BASE_URL > 默认 DeepSeek 网关 */
+/** 解析 baseUrl：DSCODE_BASE_URL（主）> DSAPI_BASE_URL（兼容）> 默认官方 DeepSeek 网关 */
 export function resolveBaseUrl(env: Record<string, string | undefined> = process.env): string {
-  return env['DSAPI_BASE_URL'] ?? 'https://api.deepseek.com';
+  return env['DSCODE_BASE_URL'] ?? env['DSAPI_BASE_URL'] ?? 'https://api.deepseek.com';
 }
 
 async function readAuthFile(authFile: string): Promise<Record<string, { type: string; key: string }>> {

@@ -63,12 +63,12 @@ interface ModelDef {
 ## 3. 鉴权优先级
 
 ```
---api-key  >  auth.json  >  DEEPSEEK_API_KEY  >  models.json 自定义
+--api-key  >  auth.json  >  DSCODE_API_KEY  >  models.json 自定义
 ```
 
 - `auth.json`（`~/.dscode/auth.json`）：首次引导写入，权限 0600（架构文档 §6）。
-- 兼容 `DSAPI_BASE_URL` / `DSAPI_API_KEY`（用户既有环境，FR-1.3），支持自定义网关/代理（`HTTP(S)_PROXY`、baseUrl 覆盖，FR-1.4）。
-- 环境变量鉴权不落盘（SC-1.2：`DEEPSEEK_API_KEY=... dscode -p hi` 直接成功）。
+- 主变量 `DSCODE_BASE_URL`（默认官方网关）/ `DSCODE_API_KEY`；兼容 `DSAPI_BASE_URL` / `DSAPI_API_KEY`（用户既有环境，FR-1.3），支持自定义网关/代理（`HTTP(S)_PROXY`、baseUrl 覆盖，FR-1.4）。
+- 环境变量鉴权不落盘（SC-1.2：`DSCODE_API_KEY=... dscode -p hi` 直接成功）。
 
 ---
 

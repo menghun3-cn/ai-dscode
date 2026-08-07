@@ -15,11 +15,11 @@ describe('HELP_TEXT（todos M1-S5 验收：--help 列出全部参数）', () => 
 });
 
 describe('parseArgs（todos M1-S5 验收）', () => {
-  it('默认 interactive、deepseek、deepseek-chat', () => {
+  it('默认 interactive、deepseek、deepseek-v4-flash', () => {
     const args = parseArgs([]);
     expect(args.mode).toBeUndefined();
     expect(args.provider).toBe('deepseek');
-    expect(args.model).toBe('deepseek-chat');
+    expect(args.model).toBe('deepseek-v4-flash');
     expect(args.help).toBe(false);
   });
 

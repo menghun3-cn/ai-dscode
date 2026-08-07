@@ -23,7 +23,7 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
   if (!resolved?.key) {
     return {
       session: null as unknown as AgentSession,
-      authError: '未找到 DeepSeek API key。请用 --api-key 指定，或运行 dscode 交互模式首次引导，或设置 DEEPSEEK_API_KEY 环境变量。',
+      authError: '未找到 DeepSeek API key。请用 --api-key 指定，或运行 dscode 交互模式首次引导，或设置 DSCODE_API_KEY 环境变量。',
     };
   }
 

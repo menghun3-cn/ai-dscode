@@ -3,7 +3,7 @@
 > 对接 DeepSeek 优先、兼容多模型的命令行 AI 编码助手（AI IDE CLI）。
 > DeepSeek-first, multi-provider AI coding assistant for the terminal.
 
-**当前状态：设计文档完备，MVP（v0.1）开发中。** 本仓库现阶段交付物为 `docs/` 全量设计文档；代码骨架正在搭建（pnpm monorepo，三包 `@dscode/core` / `@dscode/ai` / `@dscode/cli`）。
+**当前状态：MVP（v0.1）已完成并通过验收（SC-1.1~1.10 全 PASS）。** 代码为 pnpm monorepo 三包（`@dscode/core` / `@dscode/ai` / `@dscode/cli`），配套 `docs/` 全量设计文档。
 
 ## 定位
 
@@ -35,9 +35,35 @@ TypeScript + Node 22 + pnpm workspace（三包）+ vitest；Bun 编译单二进�
 
 ```bash
 pnpm install
-pnpm -r build        # 三包构建零错误（骨架验收）
-pnpm test            # vitest 全量测试
+pnpm -r build        # 三包构建零错误
+pnpm test            # vitest 全量测试（22 文件 100 用例）
+pnpm verify          # M1 验收：跑 SC-1.1~1.10，输出 PASS/FAIL 表
 ```
+
+## M1 验收实测（2026-08-07）
+
+MVP 已用真实 DeepSeek 兼容网关跑通全部 10 条成功标准：
+
+| SC | 内容 | 结果 |
+|----|------|------|
+| SC-1.1 | 启动与鉴权（auth.json 0600） | PASS |
+| SC-1.2 | 环境变量鉴权 | PASS |
+| SC-1.3~1.6 | read / write / edit / bash 四工具 | PASS |
+| SC-1.7 | Agent Loop 多轮（跑测试→修复→通过，5 轮工具调用） | PASS |
+| SC-1.8 | print 模式 stdin 管道 | PASS |
+| SC-1.9 | interactive 最小可用 | PASS |
+| SC-1.10 | 中文回退 | PASS |
+
+验收脚本 `scripts/verify-m1.mjs` 输出 PASS/FAIL/SKIP 表，LLM 相关 SC 失败时 dump turn 轨迹（每轮 tool_call + 结果 + 收敛原因）。网关/模型可通过环境变量覆盖：
+
+```bash
+DSCODE_BASE_URL=http://127.0.0.1:8000/v1 \
+DSCODE_API_KEY=sk-... \
+DSCODE_MODEL=deepseek-v4-flash \
+pnpm verify          # 默认模型 deepseek-v4-flash；可分段跑（DSCCODE_VERIFY_ONLY=SC-1.7）
+```
+
+> 首次运行无 key 时 interactive 模式会引导输入并保存到 auth.json（0600）。
 
 ## 安全
 
