@@ -47,7 +47,7 @@ export class OpenAIClient {
     this.apiKey = opts.apiKey;
     this.fetchImpl = opts.fetchImpl ?? ((url, init) => fetch(url, init));
     this.maxRetries = opts.maxRetries ?? 3;
-    this.timeoutMs = opts.timeoutMs ?? 60_000;
+    this.timeoutMs = resolveTimeoutMs(opts.timeoutMs);
   }
 
   private async resolveKey(): Promise<string> {
@@ -96,8 +96,14 @@ export class OpenAIClient {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort);
-    // 总超时兜底：本地代理/网络挂死时不至于无限等待（此前 timeoutMs 未接线）
-    const timeoutTimer = setTimeout(() => controller.abort(new Error(`provider 请求超时（${this.timeoutMs}ms）`)), this.timeoutMs);
+
+    /** 空闲超时：单次 read 超 timeoutMs 无数据即中止。每包数据到达自动续期；
+     *  真实 fetch 下同时 abort 断开连接，mock 流也能靠 reject 生效（不依赖 abort 接线）。 */
+    const stallError = () => new Error(`provider 响应停滞（${this.timeoutMs}ms 无数据）`);
+
+    // 连接/首包阶段同样有停滞兜底
+    const connectTimer = setTimeout(() => controller.abort(stallError()), this.timeoutMs);
+    connectTimer.unref?.();
     try {
       const res = await this.fetchWithRetry(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -115,13 +121,34 @@ export class OpenAIClient {
         }),
         signal: controller.signal,
       });
+      clearTimeout(connectTimer);
       if (!res.body) throw new ApiError('响应无 body');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       const parser = new SSEParser();
       const toolAcc = new Map<number, ToolCallAcc>();
+      /** 空闲超时：单次 read 超 timeoutMs 无数据即中止。每包数据到达自动续期；
+       *  真实 fetch 下同时 abort 断开连接，mock 流也能靠 reject 生效（不依赖 abort 接线）。 */
+      const readWithIdle = (): Promise<{ done: boolean; value?: Uint8Array }> =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            controller.abort(stallError());
+            reject(stallError());
+          }, this.timeoutMs);
+          timer.unref?.();
+          reader.read().then(
+            (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
+          );
+        });
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithIdle();
         if (done) break;
         for (const ev of parser.push(decoder.decode(value, { stream: true }))) {
           const event = this.parseChunk(ev, toolAcc);
@@ -138,7 +165,7 @@ export class OpenAIClient {
         }
       }
     } finally {
-      clearTimeout(timeoutTimer);
+      clearTimeout(connectTimer);
       opts.signal?.removeEventListener('abort', onAbort);
     }
   }
@@ -178,4 +205,14 @@ export class OpenAIClient {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * 空闲超时时长：显式参数 > DSCODE_TIMEOUT_MS env（毫秒）> 默认 60s。
+ * 该超时是"停滞兜底"——只在无任何数据时触发，长输出不受影响。
+ */
+function resolveTimeoutMs(explicit?: number): number {
+  if (explicit !== undefined && explicit > 0) return explicit;
+  const env = Number(process.env['DSCODE_TIMEOUT_MS']);
+  return Number.isFinite(env) && env > 0 ? env : 60_000;
 }

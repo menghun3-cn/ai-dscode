@@ -126,3 +126,56 @@ describe('OpenAIClient 重试与错误', () => {
     }).rejects.toBeInstanceOf(ApiError);
   });
 });
+
+describe('空闲超时（回归：长输出不误杀）', () => {
+  /** 按 intervalMs 逐个推送 chunk，总时长可远超 timeoutMs */
+  function slowResponse(chunks: string[], intervalMs: number): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < chunks.length) {
+            controller.enqueue(encoder.encode(chunks[i]!));
+            i += 1;
+          } else {
+            clearInterval(timer);
+            controller.close();
+          }
+        }, intervalMs);
+      },
+    });
+    return new Response(body, { status: 200 });
+  }
+
+  it('长流（数据持续到达）不中断——写长文档场景', async () => {
+    // 每 30ms 一包、共 5 包（总时长约 150ms），timeoutMs=50（每包间隙 30 < 50）
+    const payloads = ['a', 'b', 'c', 'd', 'e'].map((c) => sseChunk(`{"choices":[{"delta":{"content":"${c}"},"index":0}]}`));
+    payloads.push('data: [DONE]\n\n');
+    const fetchImpl: FetchLike = () => Promise.resolve(slowResponse(payloads, 30));
+    const c = new OpenAIClient({ baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', fetchImpl, timeoutMs: 50 });
+    const chunks: string[] = [];
+    for await (const ev of c.streamChat({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })) {
+      if (ev.content) chunks.push(ev.content);
+    }
+    expect(chunks.join('')).toBe('abcde'); // 未被总超时误杀
+  });
+
+  it('停滞（timeoutMs 内无任何数据）才中止', async () => {
+    // 只发一包后不再发数据、也不关闭 → 50ms 无数据 → 中止
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseChunk('{"choices":[{"delta":{"content":"x"},"index":0}]}')));
+        // 故意不 close、不再 enqueue → 停滞
+      },
+    });
+    const fetchImpl: FetchLike = () => Promise.resolve(new Response(body, { status: 200 }));
+    const c = new OpenAIClient({ baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', fetchImpl, timeoutMs: 50 });
+    await expect(async () => {
+      for await (const _ of c.streamChat({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })) {
+        // drain
+      }
+    }).rejects.toThrow(/停滞/);
+  });
+});
