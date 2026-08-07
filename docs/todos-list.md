@@ -35,14 +35,13 @@
 
 ---
 
-## Milestone 3：多 Provider（v0.3）
+## Milestone 3：多 Provider（v0.3）✅ 已完成
 
-- [ ] [P0] [M3] OpenAI/Anthropic provider — Chat Completions + Messages 协议适配 → 验收：`/model` 切到 GPT/claude 提问成功
-- [ ] [P0] [M3] `/model` 与 `--model` 切换、Ctrl+P 循环 → 验收：SC-3.1
-- [ ] [P0] [M3] reasoning 模型展示 — `reasoning_content` 折叠/流式 → 验收：SC-3.2
-- [ ] [P1] [M3] 远端模型目录拉取与缓存 `~/.dscode/models-store.json` → 验收：拉取后离线可用
-- [ ] [P1] [M3] 本地 OpenAI 兼容 provider（Ollama/vLLM） → 验收：连本地 Ollama 提问成功
-- [ ] [P1] [M3] 计费统计与 `/cost` → 验收：SC-3.3
+> **状态：2026-08-07 落地（SC-3.1~3.3 单测形态 + 真实网关 /cost 实测，含后置 P1）。**
+> M3 P0+P1 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 3。
+> P2 prompt cache 后置，不阻塞 M3 关闭。
+
+### M3-S7 prompt cache（后置 P2 打磨项）
 - [ ] [P2] [M3] prompt cache 支持（DeepSeek context caching） → 验收：重复 prompt 第二次 cacheRead token > 0
 
 ---

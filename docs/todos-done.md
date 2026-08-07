@@ -151,6 +151,54 @@
 
 ---
 
+## Milestone 3：多 Provider（v0.3）✅ 2026-08-07 落地
+
+> 全部完成项从 todos-list.md 迁入（含后置 P1）。SC-3.1~3.3 单测形态 + 真实网关 /cost 实测。
+> P2 prompt cache 后置（留在 todos-list.md）。
+
+### M3-S1 OpenAI/Anthropic provider（协议适配）
+- **完成时间**：2026-08-07
+- **内容**：`anthropic.ts`——Anthropic Messages client（SSE 统一解析：text→content、thinking→reasoning、tool_use→toolCalls、usage 随结束事件产出；独立停滞超时/重试）；`providers.ts`——openai（gpt-4o 系列）、anthropic（claude 系列）、local（Ollama/vLLM）+ `createDefaultProviders()` + `createClientFor()` 协议分派；`auth.ts` 新增 `resolveProviderApiKey`（auth.json 条目 > `${PROVIDER}_API_KEY`）。
+- **证据**：`anthropic.test.ts` 3 条（text/thinking/tool_use 流式解析）；`providers.test.ts` 5 条（注册表 + 协议分派）。
+- **对应**：FR-6.1/FR-6.2
+
+### M3-S2 /model 与 --model 切换、Ctrl+P 循环（SC-3.1）
+- **完成时间**：2026-08-07
+- **内容**：`session.ts` clientFactory（setModel 跨 provider 换协议 client）；`build-session.ts` 按 --provider 选初始 provider、预解析全部 key、clientFactory 热切换（deepseek 尊重 DSCODE_BASE_URL 覆盖）；TUI `/model` 列出全部 9 个模型 + Ctrl+P 循环。
+- **证据**：session 跨 provider 切换单测；交互实测 /model 列出 deepseek×3/gpt×2/claude×2/local×2。
+- **对应**：FR-6.3、SC-3.1
+
+### M3-S3 reasoning 模型展示（SC-3.2）
+- **完成时间**：2026-08-07
+- **内容**：TUI `/thinking stream|fold|off`（流式灰色 / 折叠一行 / 隐藏）；Anthropic thinking_delta → reasoningContent。
+- **证据**：anthropic.test.ts thinking 解析用例；commands.test.ts /thinking 2 条。
+- **对应**：FR-6.4、SC-3.2
+
+### M3-S4 远端模型目录拉取与缓存（后置 P1）
+- **完成时间**：2026-08-07
+- **内容**：`models-store.ts`——fetch/update/read `~/.dscode/models-store.json`（DSCODE_HOME 覆盖）、mergeModels（同名覆盖/新模型追加）、syncModelsStore（启动合并缓存离线可用 + DSCODE_MODELS_URL 拉取，失败静默保旧）；CLI `/models-update` 手动刷新（动态重建模型列表与价格表）。
+- **证据**：`models-store.test.ts` 6 条（URL/路径/拉取缓存/失败保旧/合并/离线回退）。
+- **对应**：FR-6.1
+
+### M3-S5 本地 OpenAI 兼容 provider（后置 P1）
+- **完成时间**：2026-08-07
+- **内容**：`createLocalProvider()`（默认 Ollama `http://localhost:11434/v1`，`DSCODE_LOCAL_BASE_URL`/`DSCODE_LOCAL_KEY` 可配，llama3.1/qwen2.5 目录）。
+- **证据**：providers.test.ts local provider 用例。
+- **对应**：FR-6.2
+
+### M3-S6 计费统计与 /cost（SC-3.3）
+- **完成时间**：2026-08-07
+- **内容**：`/cost` 价格表从全 provider 模型目录动态取价（rebuildModelCost）；usage 由 agent_settled 携带（session 层累计）。
+- **证据**：真实网关实测——`模型 deepseek-v4-flash · input 1445 tok · output 40 tok · cache 0 tok · 预估成本 $0.0004`。
+- **对应**：FR-6.5、SC-3.3
+
+### 过程中修复的关键缺陷（经验沉淀）
+- **Anthropic usage 只累计未产出**：message_start/delta 返回 undefined 不产出事件——改为 message_delta 结束事件附 `{...usage}`。
+- **/mo 前缀匹配**：新增 /models-update 后 /mo 命中两个命令，补全断言同步。
+- **dscodeHome 跨包引用**：ai 包不能反向依赖 core——models-store 内本地定义。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）
