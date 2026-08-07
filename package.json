@@ -12,7 +12,8 @@
     "build": "pnpm -r build",
     "test": "vitest run",
     "typecheck": "pnpm -r exec tsc --noEmit",
-    "verify": "pnpm -r build && node scripts/verify-m1.mjs"
+    "verify": "pnpm -r build && node scripts/verify-m1.mjs",
+    "build:binary": "pnpm -r build && bun build --compile packages/cli/src/index.ts --outfile dist/dscode"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -10,6 +10,7 @@ describe('HELP_TEXT（todos M1-S5 验收：--help 列出全部参数）', () => 
     expect(HELP_TEXT).toContain('--api-key');
     expect(HELP_TEXT).toContain('--continue');
     expect(HELP_TEXT).toContain('--resume');
+    expect(HELP_TEXT).toContain('--version');
     expect(HELP_TEXT).toContain('鉴权优先级');
   });
 });
@@ -36,10 +37,12 @@ describe('parseArgs（todos M1-S5 验收）', () => {
     expect(args.apiKey).toBe('sk-x');
   });
 
-  it('-c / -r / -h 布尔标志', () => {
+  it('-c / -r / -h / -v 布尔标志', () => {
     expect(parseArgs(['-c']).cont).toBe(true);
     expect(parseArgs(['-r']).resume).toBe(true);
     expect(parseArgs(['-h']).help).toBe(true);
+    expect(parseArgs(['--version']).version).toBe(true);
+    expect(parseArgs(['-v']).version).toBe(true);
   });
 
   it('位置参数保留', () => {

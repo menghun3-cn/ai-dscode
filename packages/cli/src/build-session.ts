@@ -3,13 +3,10 @@
  * 供各模式（print/interactive）复用（架构文档 §4.2.1）。
  */
 
-import { createRequire } from 'node:module';
 import process from 'node:process';
 import { OpenAIClient, resolveApiKey, resolveBaseUrl } from '@dscode/ai';
 import { AgentSessionRuntime, createBuiltinRegistry, type AgentSession } from '@dscode/core';
 import type { CliArgs } from './args.js';
-
-const require = createRequire(import.meta.url);
 
 export interface BuildSessionResult {
   session: AgentSession;
@@ -46,5 +43,3 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
 export function buildTools() {
   return createBuiltinRegistry();
 }
-
-export { require };

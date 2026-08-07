@@ -23,22 +23,92 @@
 - 原理类（12 份）：Agent Loop / 上下文压缩 / 计划执行 / 文件工具 / 沙盒执行 / MCP / Web 检索 / Session / Provider / 权限 / 扩展 / TUI
 - 进度：[todos-list.md](docs/todos-list.md)（当前 → 已完成项 [todos-done.md](docs/todos-done.md)）
 
+## 安装
+
+**方式一：单二进制（推荐，免 Node 环境）**
+
+下载对应平台的 `dscode` 二进制（或本地 `pnpm build:binary` 自行编译），放入 PATH 即可：
+
+```bash
+# Windows（dist/dscode.exe）
+./dist/dscode.exe --version
+# Linux / macOS
+./dscode --version
+```
+
+**方式二：源码运行（Node 22+）**
+
+```bash
+pnpm install
+pnpm -r build
+pnpm exec --filter @dscode/cli ...   # 或直接 node packages/cli/dist/index.js
+```
+
+## 使用
+
+首次运行前配置 API key（三选一，优先级 `--api-key` > `auth.json` > 环境变量）：
+
+```bash
+export DSCODE_API_KEY=sk-...              # 环境变量（推荐 CI）
+dscode                                     # 交互模式首次引导输入并保存 auth.json（0600）
+dscode --api-key sk-...                    # 启动参数覆盖
+```
+
+常用命令：
+
+```bash
+dscode                              # 交互模式（TUI）：/exit /help /model /cost /clear
+dscode -p "重构 auth 模块"           # print 模式：一次性执行
+echo "总结这句话" | dscode -p -      # stdin 管道
+dscode -p "跑 npm test，失败就修复到通过"   # Agent Loop 多轮自动修复
+dscode -p "..." --mode json         # 结构化事件流（CI，v0.4 完善）
+dscode --model deepseek-reasoner -p "..."   # 指定模型
+```
+
+环境变量（`dscode --help` 可查全部）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DSCODE_API_KEY` | 空 | API key（兼容 `DEEPSEEK_API_KEY`/`DSAPI_API_KEY`） |
+| `DSCODE_MODEL` | `deepseek-v4-flash` | 默认模型 |
+| `DSCODE_BASE_URL` | `https://api.deepseek.com` | 网关地址（兼容 `DSAPI_BASE_URL`）。**OpenAI 风格网关/代理需以 `/v1` 结尾**（如 `http://127.0.0.1:8000/v1`），官方 DeepSeek API 不需要（默认值即可）。配错会 404 |
+| `DSCODE_HOME` | `~/.dscode` | 数据目录 |
+| `DSCODE_DEBUG=1` | — | DEBUG 日志 |
+
 ## MVP 范围（v0.1，Milestone 1）
 
 单 provider（DeepSeek）+ 四工具（read/write/edit/bash + glob/grep）+ Agent Loop + print/interactive 两模式，验收标准为 [SC-1.1 ~ SC-1.10](docs/成功标准.md)。详见 [todos-list.md](docs/todos-list.md)。
 
 ## 技术栈
 
-TypeScript + Node 22 + pnpm workspace（三包）+ vitest；Bun 编译单二进制分发（v1.0）。
+TypeScript + Node 22 + pnpm workspace（三包）+ vitest；Bun 编译单二进制分发。
 
 ## 开发
 
 ```bash
 pnpm install
 pnpm -r build        # 三包构建零错误
-pnpm test            # vitest 全量测试（22 文件 100 用例）
+pnpm test            # vitest 全量测试（22 文件 101 用例）
 pnpm verify          # M1 验收：跑 SC-1.1~1.10，输出 PASS/FAIL 表
 ```
+
+## 单二进制分发
+
+```bash
+pnpm build:binary    # 先构建三包，再 bun build --compile → dist/dscode(.exe)
+```
+
+- 产物为单文件，免 Node 环境（SC-6.2 验收：无 Node 机器上 `./dscode --version` 成功）。
+- 默认编译当前平台；跨平台产物用 `--target` 指定（在对应平台或 CI 矩阵里编译）：
+
+```bash
+bun build --compile packages/cli/src/index.ts --outfile dist/dscode \
+  --target=bun-linux-x64        # Linux x64
+  # --target=bun-windows-x64    # Windows x64
+  # --target=bun-darwin-arm64   # macOS Apple Silicon
+```
+
+- `dist/` 已被 .gitignore 忽略，二进制不入库，随 Release 分发。
 
 ## M1 验收实测（2026-08-07）
 

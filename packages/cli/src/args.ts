@@ -20,9 +20,13 @@ export interface CliArgs {
   /** -r 浏览会话（M2 落地，先解析） */
   resume: boolean;
   help: boolean;
+  version: boolean;
   /** 位置参数（第一个可作 prompt） */
   positionals: string[];
 }
+
+/** 版本号（与 packages/cli/package.json 同步；SC-6.2 验收用 --version） */
+export const DSCCODE_VERSION = '0.1.0';
 
 export function parseArgs(argv: string[]): CliArgs {
   const { values, positionals } = nodeParseArgs({
@@ -36,6 +40,7 @@ export function parseArgs(argv: string[]): CliArgs {
       continue: { type: 'boolean', short: 'c' },
       resume: { type: 'boolean', short: 'r' },
       help: { type: 'boolean', short: 'h' },
+      version: { type: 'boolean', short: 'v' },
     },
     allowPositionals: true,
     strict: false,
@@ -56,6 +61,7 @@ export function parseArgs(argv: string[]): CliArgs {
     cont: values['continue'] === true,
     resume: values['resume'] === true,
     help: values['help'] === true,
+    version: values['version'] === true,
     positionals,
   };
 }
@@ -76,6 +82,7 @@ export const HELP_TEXT = `dscode — DeepSeek 优先的命令行 AI 编码助手
       --api-key <key>      显式 API key（优先级最高）
   -c, --continue           继续最近会话（v0.2 落地）
   -r, --resume             浏览会话（v0.2 落地）
+  -v, --version            显示版本号
   -h, --help               显示帮助
 
 环境变量:
