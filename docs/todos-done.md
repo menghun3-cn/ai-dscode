@@ -360,7 +360,7 @@
 
 ## Milestone 8：分发与发布（v1.0）✅ 2026-08-08 落地
 
-> 完成项从 todos-list.md 迁入（M8-S1~S6）。SC-6.1/6.2 实测通过；SC-6.4 跨平台实测待 GitHub Actions 补验（M8-S7 后置）。
+> 完成项从 todos-list.md 迁入（M8-S1~S7）。SC-6.1/6.2/6.4 实测通过（SC-6.4 三平台全绿）。
 
 ### M8-S1 npm 全局包发布配置（SC-6.1）
 - **完成时间**：2026-08-08
@@ -397,6 +397,12 @@
 - **内容**：`LICENSE`（MIT，Copyright (c) 2026 menghun3-cn）；README 致谢节——注明借鉴 pi / Claude Code / Codex CLI / Cursor / OpenCode / MCP 的设计理念，明确**独立自主实现、非逐行抄写**声明（对齐风险登记要求）。
 - **证据**：LICENSE 存在；README 致谢节可读。
 - **对应**：todos M8 P0
+
+### M8-S7 跨平台回归矩阵实测（后置 P0，SC-6.4）
+- **完成时间**：2026-08-08
+- **内容**：`.github/workflows/ci.yml` 推送 master 后由 GitHub Actions 执行——win/macOS/Linux 三平台各跑 install → build → test（SC-1.3~1.7）→ build:binary → 验证二进制。
+- **证据**：**ubuntu-latest / macos-latest / windows-latest 三平台全绿**（用户于 Actions 页确认）；`dscode` 二进制三平台产出成功（SC-6.2 跨平台成立）。
+- **对应**：SC-6.4（三平台全绿）
 
 ### 过程中修复的关键缺陷（经验沉淀）
 - **凭据守卫拦截**：PowerShell 实测时把 API key 写进 `-Command` 字符串参数被凭据守卫拦截——key 应走环境变量前缀，不经 shell 参数（SC-6.4 Windows 实测的教训）。

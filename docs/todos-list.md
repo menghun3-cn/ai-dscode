@@ -72,12 +72,8 @@
 
 ## Milestone 8：分发与发布（v1.0）✅ 已完成
 
-> **状态：2026-08-08 落地（SC-6.1 npm 配置、SC-6.2 单二进制、curl 安装脚本、英文 README、MIT 许可证与致谢）。**
-> M8 完成项已归档至 [todos-done.md](todos-done.md) §Milestone 8。
-> SC-6.4 跨平台实测（macOS/Linux）依赖 GitHub Actions 执行 CI 后补验，后置不阻塞 M8 关闭。
-
-### M8-S7 跨平台实测（后置，待 GitHub Actions）
-- [ ] [P0] [M9] 跨平台回归矩阵实测 — CI workflow 已就绪；推送到 master 后由 GitHub Actions 在 win/macOS/Linux 跑通 SC-1.3~1.7 → 验收：SC-6.4
+> **状态：2026-08-08 落地（SC-6.1 npm 配置、SC-6.2 单二进制、curl 安装脚本、英文 README、MIT 许可证与致谢；SC-6.4 三平台全绿实测通过）。**
+> M8 全部完成项已归档至 [todos-done.md](todos-done.md) §Milestone 8。
 
 ---
 

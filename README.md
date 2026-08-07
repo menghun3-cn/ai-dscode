@@ -3,7 +3,7 @@
 > 对接 DeepSeek 优先、兼容多模型的命令行 AI 编码助手（AI IDE CLI）。
 > DeepSeek-first, multi-provider AI coding assistant for the terminal.
 
-**当前状态：v0.7（M1~M7 全部关闭：MVP / Session / 多 Provider / 扩展系统 / 权限与 Plan / Compaction / MCP 与 RPC；SC-6.1/6.2/6.3 实测通过）。** 代码为 pnpm monorepo 三包（`@dscode/core` / `@dscode/ai` / `@dscode/cli`），配套 `docs/` 全量设计文档。
+**当前状态：v1.0（M1~M8 全部关闭：MVP / Session / 多 Provider / 扩展系统 / 权限与 Plan / Compaction / MCP 与 RPC / 分发与发布；SC-6.1~6.4 实测通过）。** 代码为 pnpm monorepo 三包（`@dscode/core` / `@dscode/ai` / `@dscode/cli`），配套 `docs/` 全量设计文档。
 
 ## 定位
 

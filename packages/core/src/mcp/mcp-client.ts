@@ -69,7 +69,7 @@ export class McpClient {
     const result = (await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'dscode', version: '0.7.0' },
+      clientInfo: { name: 'dscode', version: '1.0.0' },
     })) as { protocolVersion?: string; serverInfo?: { name: string; version: string } };
     if (!result?.serverInfo) {
       await this.close();

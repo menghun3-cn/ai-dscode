@@ -3,7 +3,7 @@
 > DeepSeek-first, multi-provider AI coding assistant for the terminal (AI IDE CLI).
 > DeepSeek 优先、兼容多模型的命令行 AI 编码助手（中文版见 [README.md](README.md)）。
 
-**Status: v0.7 — Milestones M1~M7 all closed** (MVP / Session persistence / Multi-provider / Extension system / Permission & Plan / Compaction / MCP & RPC). SC-6.1/6.2/6.3 verified end-to-end. A pnpm monorepo of three packages (`@dscode/core` / `@dscode/ai` / `@dscode/cli`) with full design docs in `docs/`.
+**Status: v1.0 — Milestones M1~M8 all closed** (MVP / Session persistence / Multi-provider / Extension system / Permission & Plan / Compaction / MCP & RPC / Distribution). SC-6.1~6.4 verified end-to-end. A pnpm monorepo of three packages (`@dscode/core` / `@dscode/ai` / `@dscode/cli`) with full design docs in `docs/`.
 
 ## Positioning
 
