@@ -208,11 +208,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 空闲超时时长：显式参数 > DSCODE_TIMEOUT_MS env（毫秒）> 默认 60s。
+ * 空闲超时时长：显式参数 > DSCODE_TIMEOUT_MS env（毫秒）> 默认 300s。
  * 该超时是"停滞兜底"——只在无任何数据时触发，长输出不受影响。
  */
 function resolveTimeoutMs(explicit?: number): number {
   if (explicit !== undefined && explicit > 0) return explicit;
   const env = Number(process.env['DSCODE_TIMEOUT_MS']);
-  return Number.isFinite(env) && env > 0 ? env : 60_000;
+  return Number.isFinite(env) && env > 0 ? env : 300_000;
 }
