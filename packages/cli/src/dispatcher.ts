@@ -37,7 +37,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
   }
 
   if (mode === 'print') {
-    return runPrint(session, args.printPrompt ?? args.positionals.join(' '));
+    return runPrint(session, args.printPrompt, args.positionals);
   }
   // interactive（TUI）
   return runInteractive(session);

@@ -25,8 +25,8 @@ export async function resolvePrintPrompt(prompt: string | undefined, positionals
   return positionals.join(' ');
 }
 
-export async function runPrint(session: AgentSession, prompt: string): Promise<number> {
-  const input = prompt || (await resolvePrintPrompt(prompt, []));
+export async function runPrint(session: AgentSession, prompt: string | undefined, positionals: string[] = []): Promise<number> {
+  const input = await resolvePrintPrompt(prompt, positionals);
   if (!input.trim()) {
     process.stderr.write('print 模式缺少 prompt。用法: dscode -p "任务描述"，或管道输入: echo "..." | dscode -p -\n');
     return 2;
