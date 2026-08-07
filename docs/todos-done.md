@@ -153,8 +153,7 @@
 
 ## Milestone 3：多 Provider（v0.3）✅ 2026-08-07 落地
 
-> 全部完成项从 todos-list.md 迁入（含后置 P1）。SC-3.1~3.3 单测形态 + 真实网关 /cost 实测。
-> P2 prompt cache 后置（留在 todos-list.md）。
+> 全部完成项从 todos-list.md 迁入（含后置 P1 与 P2）。SC-3.1~3.3 单测形态 + 真实网关 /cost 实测。
 
 ### M3-S1 OpenAI/Anthropic provider（协议适配）
 - **完成时间**：2026-08-07
