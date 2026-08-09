@@ -245,7 +245,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     process.stdout.write('\x1b[u');
   };
 
-  /** 重绘底部信息区：状态行（rows-1）+ 快捷键/进度行（rows），光标回原位 */
+  /** 重绘底部信息区：状态行固定于 rows-1（输入行 rows 由 anchorInput 锚定），光标回原位 */
   const drawInfoArea = () => {
     if (!process.stdout.isTTY) return;
     const cols = process.stdout.columns || 80;
@@ -265,7 +265,6 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         cols - 1,
       )}`,
     );
-    process.stdout.write(`\x1b[${rows};1H\x1b[K${truncateByWidth('⏎ 发送 · Ctrl+C 中止 · Ctrl+R 历史 · @文件补全 · / 命令', cols - 1)}`);
     process.stdout.write('\x1b[u');
   };
 
@@ -276,12 +275,21 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     process.stdout.write(text);
     drawInfoArea();
     if (menu) drawMenu();
+    anchorInput(); // 输入框锚定回最底行，readline 重画 prompt+line
   };
 
   const refresh = () => {
     rl.setPrompt(running ? BUSY_PROMPT : NORMAL_PROMPT); // 运行中显示 busy 提示符
     drawInfoArea();
     if (menu) drawMenu();
+    anchorInput();
+  };
+
+  /** 输入框锚定：光标移到最底行 rows 并让 readline 重画 prompt+line（提交后不乱屏的关键） */
+  const anchorInput = () => {
+    if (!process.stdout.isTTY) return;
+    const rows = process.stdout.rows || 24;
+    process.stdout.write(`\x1b[${rows};1H`);
     rl.prompt();
   };
 
