@@ -423,6 +423,19 @@
 - **审计方式**：安全相关 4 个测试文件 26 条全绿（auth / permission / trust / loader）。
 - **结论**：无 high 级漏洞，发布级约束满足。
 
+### 日志与可观测（P1，NFR-4）
+- **内容**：`core/observability/logger.ts`——`createDebugLogger` 在 AgentEvent 消费点写入 `~/.dscode/logs/<时间戳>-<session>.log`（JSONL，每行 `{ts,type,data}`）；agent_settled 含 reason（收敛原因）与 usage（每轮 input/output/cache token）；观测点=事件流，不做独立 instrumentation 层。
+- **接线**：四个模式（print / json / rpc / tui）的 run 循环 `logger.log(ev)` + finally close。
+- **证据**：`DSCODE_DEBUG=1` 实测产出日志（`agent_start`/`reasoning_update`/`"reason":"no-tool-calls"`）；logger.test 3 条。
+- **修复的坑**：`createWriteStream` 不建父目录——先 `mkdirSync(logs)` 否则日志静默丢失。
+- **对应**：NFR-4（含每轮收敛原因 + usage 附加判据）
+
+### 错误体验（P1）
+- **内容**：`cli/errors.ts` `friendlyError`——网络/限流错误（429/5xx/ECONNREFUSED/fetch failed/停滞）附"稍后重试，检查 DSCODE_BASE_URL/代理"；其余附"DSCODE_DEBUG=1 查看详细日志"；index.ts 顶层 catch 不再裸栈（仅 DEBUG 模式给堆栈）。
+- **接线**：print / json / rpc / tui 四处错误路径全部使用 friendlyError。
+- **证据**：errors.test 3 条（含"不泄露堆栈"断言）。
+- **对应**：todos P1 验收（制造 429/网络断 UI 不崩——错误被 catch 且提示友好，不崩）
+
 ---
 
 ## 经验沉淀
