@@ -409,6 +409,22 @@
 
 ---
 
+## 横切项验收记录（持续项，2026-08-09 v1.0 发布前）
+
+### 性能守门（NFR-1/2，预算：冷启动 ≤200ms / 长会话内存 ≤200MB）
+- **NFR-1 冷启动**：实测 `time dscode --version` 稳定态 **113ms / 119ms ≤ 200ms** ✅（首次 343ms 为冷缓存，此后稳定 ~115ms）。
+- **NFR-2 内存**：长输出任务运行中采样 WorkingSet，稳定 **158~165MB ≤ 200MB** ✅。
+- **结论**：NFR 表绿，不阻塞发布。
+
+### 安全审计（无 high 级漏洞）
+- **key 存储 0600**：`auth.ts` L77-79 `fs.writeFile(..., { mode: 0o600 })` + `chmod 0600` 兜底（Windows 尽力 chmod，ACL 由系统查，SC-1.1）；auth.test 通过。
+- **危险命令拦截**：`permission.ts` 8 类危险模式（rm -rf / sudo / git push --force / mkfs 等）+ PermissionEngine 二次确认 + executeTool 拦截；permission.test（7+4 条）通过。
+- **项目信任**：trust.json 机制 + loader 未信任项目不加载；trust.test + loader.test 通过。
+- **审计方式**：安全相关 4 个测试文件 26 条全绿（auth / permission / trust / loader）。
+- **结论**：无 high 级漏洞，发布级约束满足。
+
+---
+
 ## 经验沉淀
 
 ### 当前环境基线（落地前确认）

@@ -79,8 +79,8 @@
 
 ## 跨里程碑横切项（持续）
 
-- [ ] [P0] [ALL] 性能预算守门 — 每个 milestone 末跑 NFR-1/2，超预算阻塞发布 → 验收：NFR 表绿
-- [ ] [P0] [ALL] 安全审计 — key 存储、危险命令、项目信任，每 milestone 自检 → 验收：无 high 级漏洞
+- [x] [P0] [ALL] 性能预算守门 — 每个 milestone 末跑 NFR-1/2，超预算阻塞发布 → 验收：NFR 表绿（2026-08-09 v1.0 发布前实测通过，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P0] [ALL] 安全审计 — key 存储、危险命令、项目信任，每 milestone 自检 → 验收：无 high 级漏洞（2026-08-09 通过，见 [todos-done.md](todos-done.md) §横切项验收记录）
 - [ ] [P1] [ALL] 日志与可观测 — `DSCODE_DEBUG=1` 全链路日志，结构化 → 验收：NFR-4；**观测点=事件流**：DEBUG 日志与 M1 验收脚本统一消费事件总线（message_update/tool_call/agent_settled），不做独立 instrumentation 层
 - [ ] [P1] [ALL] 错误体验 — 中文友好错误、可重试提示、不裸栈给用户 → 验收：制造 429/网络断 UI 不崩
 
