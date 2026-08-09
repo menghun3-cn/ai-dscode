@@ -125,6 +125,15 @@ export class AgentSession {
     return this.modelId;
   }
 
+  /** /name 设置的会话名（从 entries 反向找最后一个 label entry；无则 undefined） */
+  get name(): string | undefined {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i]!;
+      if (e.type === 'label' && e.name) return e.name;
+    }
+    return undefined;
+  }
+
   setModel(id: string): void {
     this.modelId = id;
     // M3：跨 provider 切换时经 factory 重建协议 client

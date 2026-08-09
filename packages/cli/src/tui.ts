@@ -7,6 +7,7 @@
 
 import readline, { type Key } from 'node:readline';
 import process from 'node:process';
+import { readdirSync } from 'node:fs';
 import type { AgentEvent, AgentSession, ExtensionManager } from '@dscode/core';
 import { createDebugLogger } from '@dscode/core';
 import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
@@ -41,6 +42,53 @@ rebuildModelCost();
 
 /** reasoning 展示模式（/thinking 切换，SC-3.2）：stream=流式灰色 / fold=折叠一行 / off=隐藏 */
 let thinkingMode: 'stream' | 'fold' | 'off' = 'stream';
+
+/** 流式代码块围栏状态（跨 chunk 维护，P1 交互优化 C） */
+let codeFenceOpen = false;
+
+/** 重置代码块围栏状态（每轮 agent 运行前调用，防围栏未闭合污染后续输出） */
+export function resetCodeFence(): void {
+  codeFenceOpen = false;
+}
+
+/**
+ * 渲染一段流式文本：识别 ``` 围栏，块内青色 + 块首语言标签 + 块尾闭合。
+ * 返回 ANSI 渲染串（纯函数 + 模块态，便于单测）。
+ */
+export function renderStreamingText(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const idx = text.indexOf('```', cursor);
+    if (idx === -1) {
+      const tail = text.slice(cursor);
+      out += codeFenceOpen ? `\x1b[36m${tail}\x1b[0m` : tail;
+      break;
+    }
+    const before = text.slice(cursor, idx);
+    out += codeFenceOpen ? `\x1b[36m${before}\x1b[0m` : before;
+    if (!codeFenceOpen) {
+      // 打开围栏：块首语言标签（``` 后到行尾）
+      const after = text.slice(idx + 3);
+      const langEnd = after.indexOf('\n');
+      const lang = (langEnd === -1 ? after : after.slice(0, langEnd)).trim();
+      out += `\n\x1b[36m\`\`\`${lang}\x1b[0m\n`;
+      codeFenceOpen = true;
+      cursor = idx + 3 + (langEnd === -1 ? after.length : langEnd + 1);
+    } else {
+      // 闭合围栏
+      out += `\n\x1b[36m\`\`\`\x1b[0m\n`;
+      codeFenceOpen = false;
+      cursor = idx + 3;
+    }
+  }
+  return out;
+}
+
+/** 粘贴折叠判定：窗口内连续非 slash 行视为同批粘贴（P1 交互优化 A） */
+export function shouldMergePaste(input: string, lastLineAt: number, now: number, windowMs: number): boolean {
+  return now - lastLineAt <= windowMs && !input.startsWith('/');
+}
 
 /** 渲染一个 agent 事件到 stdout（纯文本滚动） */
 export function renderEvent(ev: AgentEvent): void {
@@ -103,10 +151,26 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-/** 底部状态栏文本：模型 · 路径 · used/窗口 tok (占比) */
-export function statusText(opts: { model: string; cwd: string; usedTokens: number; contextWindow: number }): string {
+/** 底部状态栏文本：busy · [plan] · 会话名 · 模型 · 路径 · used/窗口 tok (占比) */
+export function statusText(opts: {
+  model: string;
+  cwd: string;
+  usedTokens: number;
+  contextWindow: number;
+  name?: string;
+  planActive?: boolean;
+  busy?: boolean;
+}): string {
   const pct = opts.contextWindow > 0 ? Math.round((opts.usedTokens / opts.contextWindow) * 100) : 0;
-  return `${opts.model} · ${opts.cwd} · ${fmtTokens(opts.usedTokens)}/${fmtTokens(opts.contextWindow)} tok (${pct}%)`;
+  const parts = [
+    opts.busy ? '⏳' : '',
+    opts.planActive ? '[plan]' : '',
+    opts.name ? `「${opts.name}」` : '',
+    opts.model,
+    opts.cwd,
+    `${fmtTokens(opts.usedTokens)}/${fmtTokens(opts.contextWindow)} tok (${pct}%)`,
+  ].filter(Boolean);
+  return parts.join(' · ');
 }
 
 export async function runInteractive(session: AgentSession, extManager?: ExtensionManager): Promise<number> {
@@ -117,11 +181,14 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
     allModelDefs = PROVIDERS.flatMap((p) => p.models);
   };
+  // P1 交互优化：运行中 busy 提示符（⏳）
+  const NORMAL_PROMPT = '\x1b[32mdscode>\x1b[0m ';
+  const BUSY_PROMPT = '\x1b[33m⏳ dscode>\x1b[0m ';
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
-    prompt: '\x1b[32mdscode>\x1b[0m ',
+    prompt: NORMAL_PROMPT,
     // 候选提示由下方命令菜单承载（↑↓ 选择），不再用 readline 自带 Tab 补全
   });
 
@@ -138,19 +205,35 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows || 24;
     const text = truncateByWidth(
-      statusText({ model, cwd: session.cwd, usedTokens: usage.promptTokens, contextWindow: contextWindowOf(model) }),
+      statusText({
+        model,
+        cwd: session.cwd,
+        usedTokens: usage.promptTokens,
+        contextWindow: contextWindowOf(model),
+        name: session.name,
+        planActive: session.plan.isActive,
+        busy: running,
+      }),
       cols - 1,
     );
     process.stdout.write(`\x1b[s\x1b[${rows};1H\x1b[K${text}\x1b[u`);
   };
   const refresh = () => {
+    rl.setPrompt(running ? BUSY_PROMPT : NORMAL_PROMPT); // 运行中显示 busy 提示符
     drawStatusBar();
     rl.prompt();
+  };
+
+  /** 退出提示：会话已持久化，可用 dscode -c 恢复（P1 交互优化 G） */
+  const printSaveHint = (): void => {
+    process.stdout.write(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）\n`);
   };
 
   // 命令候选菜单：输入 / 或 /xxx 时在输入行下方弹出，↑↓ 选择、回车执行
   let menu: { candidates: string[]; index: number } | null = null;
   let menuLines = 0;
+  // Ctrl+R 历史菜单数据（最近提交的输入，去重）
+  let history: string[] = [];
 
   /** 绘制/刷新菜单（保存光标 → 清旧区 → 画新区 → 恢复光标） */
   const drawMenu = () => {
@@ -169,9 +252,25 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     process.stdout.write('\x1b[u');
   };
 
+  /** @文件 补全：匹配行尾 @前缀，返回"保留前缀的完整行替换"候选（P1 交互优化 E） */
+  const fileCompletions = (line: string): string[] => {
+    const m = line.match(/@([^\s@]*)$/);
+    if (!m) return [];
+    const prefix = m[1]!;
+    try {
+      const entries = readdirSync(session.cwd, { withFileTypes: true });
+      return entries
+        .filter((e) => e.name.startsWith(prefix))
+        .slice(0, 20)
+        .map((e) => line.replace(/@[^\s@]*$/, `@${e.name}`));
+    } catch {
+      return [];
+    }
+  };
+
   /** 根据当前输入行刷新候选菜单（无候选则关闭） */
   const updateMenu = (line: string) => {
-    const candidates = commandCompletions(line, availableModels);
+    const candidates = line.startsWith('/') ? commandCompletions(line, availableModels) : fileCompletions(line);
     if (candidates.length > 0) {
       if (!menu) {
         menu = { candidates, index: 0 };
@@ -192,6 +291,15 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   const rlAny = rl as unknown as { _ttyWrite: (s: string, key: Key) => void };
   const origTtyWrite = rlAny._ttyWrite.bind(rl);
   rlAny._ttyWrite = (s: string, key: Key) => {
+    // Ctrl+R：历史菜单（复用候选菜单机制，最近 15 条，最新在上）
+    if (key.ctrl && key.name === 'r') {
+      const candidates = history.slice(-15).reverse();
+      if (candidates.length > 0) {
+        menu = { candidates, index: 0 };
+        drawMenu();
+      }
+      return;
+    }
     // Ctrl+P：循环切换模型（M3，SC-3.1）
     if (key.ctrl && key.name === 'p') {
       const idx = availableModels.indexOf(model);
@@ -373,6 +481,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       refresh();
     } else {
       process.stdout.write('\n');
+      printSaveHint(); // 会话已持久化，可 -c 恢复
       rl.close();
       process.exit(0);
     }
@@ -382,11 +491,24 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   process.stdout.write('dscode — 输入 /help 查看命令，/exit 退出\n');
   refresh();
 
-  for await (const line of rl) {
-    const input = line.trim();
-    if (!input) {
+  // ---- 交互主循环（P1 交互优化：粘贴安全——快速连续多行折叠为单行，防逐行误执行） ----
+  const PASTE_WINDOW_MS = 120;
+
+  /** 单条输入的处理（slash 命令 / Agent 任务）；hint 为可选提示（粘贴折叠时） */
+  const processInput = async (input: string, hint?: string): Promise<void> => {
+    if (hint) process.stdout.write(`\x1b[33m${hint}\x1b[0m\n`);
+
+    // 记录历史（去重相邻，Ctrl+R 用）
+    if (input && history[history.length - 1] !== input) {
+      history.push(input);
+      if (history.length > 50) history.shift();
+    }
+
+    // 运行中拦截：非 slash 输入不执行（防缓冲误操作）；slash 命令放行（如 /exit /cost）
+    if (running && !input.startsWith('/')) {
+      process.stdout.write('\x1b[33m任务运行中（Ctrl+C 中止后再输入）\x1b[0m\n');
       refresh();
-      continue;
+      return;
     }
 
     // slash 命令（M2 会话命令为异步）
@@ -394,24 +516,27 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     if (res.handled) {
       if (res.output) process.stdout.write(`${res.output}\n`);
       if (res.exitCode !== undefined) {
+        printSaveHint(); // 会话已持久化，可 -c 恢复
+        exitCode = res.exitCode;
         rl.close();
-        return res.exitCode;
+        return;
       }
       refresh();
-      continue;
+      return;
     }
 
     // Agent 任务：先展开 @文件 / !命令 注入（P1）
     running = true;
     const turnStart = Date.now();
+    resetCodeFence(); // 每轮重置代码块围栏状态
     const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
     try {
       const expanded = await expandInput(input, session.cwd);
       for await (const ev of session.run(expanded)) {
         logger?.log(ev);
         if (ev.type === 'message_update') {
-          // 流式逐 token 输出
-          process.stdout.write(ev.content);
+          // 流式逐 token 输出（含代码块围栏着色）
+          process.stdout.write(renderStreamingText(ev.content));
         } else {
           renderEvent(ev);
         }
@@ -432,7 +557,53 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       running = false;
     }
     refresh();
-  }
+  };
 
-  return 0;
+  let exitCode = 0;
+  let pending: string | null = null;
+  let pendingCount = 0;
+  let lastLineAt = 0;
+  let flushTimer: NodeJS.Timeout | null = null;
+
+  /** 折叠累积的粘贴批次并执行（单行也经此统一出口） */
+  const flushPending = (): void => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    if (pending === null) return;
+    const total = pendingCount + 1;
+    const merged = pending.trim();
+    pending = null;
+    pendingCount = 0;
+    void processInput(merged, total > 1 ? `（检测到 ${total} 行多行输入，已折叠为单行）` : undefined);
+  };
+
+  rl.on('line', (rawLine) => {
+    const input = rawLine.trim();
+    if (!input) return;
+    const now = Date.now();
+    // 同批粘贴（窗口内连续行）累积；slash 命令不参与折叠
+    if (pending !== null && shouldMergePaste(input, lastLineAt, now, PASTE_WINDOW_MS)) {
+      pending += ` ${input}`;
+      pendingCount++;
+      lastLineAt = now;
+    } else {
+      flushPending(); // 先执行旧批（窗口已过或遇到 slash）
+      pending = input;
+      pendingCount = 0;
+      lastLineAt = now;
+    }
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushPending, PASTE_WINDOW_MS);
+  });
+
+  await new Promise<void>((resolve) => {
+    rl.on('close', () => {
+      flushPending();
+      resolve();
+    });
+  });
+
+  return exitCode;
 }
