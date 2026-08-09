@@ -90,36 +90,33 @@ export function shouldMergePaste(input: string, lastLineAt: number, now: number,
   return now - lastLineAt <= windowMs && !input.startsWith('/');
 }
 
-/** 渲染一个 agent 事件到 stdout（纯文本滚动） */
-export function renderEvent(ev: AgentEvent): void {
+/** 渲染一个 agent 事件为文本串（P1 分区：供 tuiWrite 统一输出） */
+export function renderEventText(ev: AgentEvent): string {
   switch (ev.type) {
     case 'message_update':
-      process.stdout.write(ev.content);
-      break;
+      return ev.content;
     case 'reasoning_update':
-      if (thinkingMode === 'off') break;
-      if (thinkingMode === 'fold') {
-        process.stdout.write('\x1b[90m[思考中…]\x1b[0m');
-        break;
-      }
-      process.stdout.write(`\x1b[90m${ev.content}\x1b[0m`); // 灰色展示思考过程
-      break;
+      if (thinkingMode === 'off') return '';
+      if (thinkingMode === 'fold') return '\x1b[90m[思考中…]\x1b[0m';
+      return `\x1b[90m${ev.content}\x1b[0m`; // 灰色展示思考过程
     case 'tool_call':
-      process.stdout.write(`\n\x1b[36m⚙ ${ev.toolName}\x1b[0m `);
       try {
         const args = JSON.parse(ev.args) as Record<string, unknown>;
-        process.stdout.write(truncateByWidth(JSON.stringify(args), 200));
+        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${truncateByWidth(JSON.stringify(args), 200)}\n`;
       } catch {
-        process.stdout.write(truncateByWidth(ev.args, 200));
+        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${truncateByWidth(ev.args, 200)}\n`;
       }
-      process.stdout.write('\n');
-      break;
     case 'tool_result':
-      if (ev.isError) process.stdout.write(`\x1b[31m✗ ${truncateByWidth(ev.output, 300)}\x1b[0m\n`);
-      break;
+      if (ev.isError) return `\x1b[31m✗ ${truncateByWidth(ev.output, 300)}\x1b[0m\n`;
+      return '';
     default:
-      break;
+      return '';
   }
+}
+
+/** 渲染一个 agent 事件到 stdout（兼容测试与外部调用） */
+export function renderEvent(ev: AgentEvent): void {
+  process.stdout.write(renderEventText(ev));
 }
 
 export function costText(model: string, usage: UsageStats): string {
@@ -173,6 +170,43 @@ export function statusText(opts: {
   return parts.join(' · ');
 }
 
+/** 路径截短：过长时保留末尾（状态行用） */
+export function shortenPath(cwd: string, maxLen = 34): string {
+  if (cwd.length <= maxLen) return cwd;
+  return `…${cwd.slice(-(maxLen - 1))}`;
+}
+
+/** 上下文进度条 + 已用/剩余（P1 交互优化 F：剩余量） */
+export function contextBar(usedTokens: number, contextWindow: number): string {
+  if (contextWindow <= 0) return '';
+  const pct = Math.min(100, Math.round((usedTokens / contextWindow) * 100));
+  const filled = Math.round((pct / 100) * 10);
+  const bar = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
+  const remaining = Math.max(0, contextWindow - usedTokens);
+  return `${bar} ${fmtTokens(usedTokens)}/${fmtTokens(contextWindow)} (${pct}% · 剩 ${fmtTokens(remaining)})`;
+}
+
+/** 增强状态行（信息区常驻）：⏳ · [plan] · 「会话名」 · 模型 · 路径 · 上下文进度 */
+export function statusBarText(opts: {
+  model: string;
+  cwd: string;
+  usedTokens: number;
+  contextWindow: number;
+  name?: string;
+  planActive?: boolean;
+  busy?: boolean;
+}): string {
+  const parts = [
+    opts.busy ? '⏳' : '',
+    opts.planActive ? '[plan]' : '',
+    opts.name ? `「${opts.name}」` : '',
+    opts.model,
+    shortenPath(opts.cwd),
+    contextBar(opts.usedTokens, opts.contextWindow),
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
 export async function runInteractive(session: AgentSession, extManager?: ExtensionManager): Promise<number> {
   // M3：全部 provider 的模型（跨 provider 统一编号，/model 与 Ctrl+P 用）
   let availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
@@ -199,38 +233,66 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   const contextWindowOf = (modelId: string): number =>
     allModelDefs.find((m) => m.id === modelId)?.contextWindow ?? 65536;
 
-  // 底部状态栏：保存光标 → 移到末行 → 清行 → 写状态 → 恢复光标
-  const drawStatusBar = () => {
+  // P1 分区：底部信息区（2 行：状态行 + 提示/进度行）常驻重绘，与上方输出区隔离
+  const INFO_ROWS = 2;
+
+  /** 清空底部信息区（状态行 + 提示行） */
+  const clearInfoArea = () => {
+    if (!process.stdout.isTTY) return;
+    const rows = process.stdout.rows || 24;
+    process.stdout.write('\x1b[s');
+    process.stdout.write(`\x1b[${rows - 1};1H\x1b[K\x1b[${rows};1H\x1b[K`);
+    process.stdout.write('\x1b[u');
+  };
+
+  /** 重绘底部信息区：状态行（rows-1）+ 快捷键/进度行（rows），光标回原位 */
+  const drawInfoArea = () => {
     if (!process.stdout.isTTY) return;
     const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows || 24;
-    const text = truncateByWidth(
-      statusText({
-        model,
-        cwd: session.cwd,
-        usedTokens: usage.promptTokens,
-        contextWindow: contextWindowOf(model),
-        name: session.name,
-        planActive: session.plan.isActive,
-        busy: running,
-      }),
-      cols - 1,
+    process.stdout.write('\x1b[s');
+    process.stdout.write(
+      `\x1b[${rows - 1};1H\x1b[K${truncateByWidth(
+        statusBarText({
+          model,
+          cwd: session.cwd,
+          usedTokens: usage.promptTokens,
+          contextWindow: contextWindowOf(model),
+          name: session.name,
+          planActive: session.plan.isActive,
+          busy: running,
+        }),
+        cols - 1,
+      )}`,
     );
-    process.stdout.write(`\x1b[s\x1b[${rows};1H\x1b[K${text}\x1b[u`);
+    process.stdout.write(`\x1b[${rows};1H\x1b[K${truncateByWidth('⏎ 发送 · Ctrl+C 中止 · Ctrl+R 历史 · @文件补全 · / 命令', cols - 1)}`);
+    process.stdout.write('\x1b[u');
   };
+
+  /** 统一 TUI 输出：清信息区 → 写内容 → 重绘信息区（输出与信息区互不覆盖）；菜单开着则联动重绘 */
+  const tuiWrite = (text: string) => {
+    if (!text) return;
+    clearInfoArea();
+    process.stdout.write(text);
+    drawInfoArea();
+    if (menu) drawMenu();
+  };
+
   const refresh = () => {
     rl.setPrompt(running ? BUSY_PROMPT : NORMAL_PROMPT); // 运行中显示 busy 提示符
-    drawStatusBar();
+    drawInfoArea();
+    if (menu) drawMenu();
     rl.prompt();
   };
 
   /** 退出提示：会话已持久化，可用 dscode -c 恢复（P1 交互优化 G） */
   const printSaveHint = (): void => {
-    process.stdout.write(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）\n`);
+    tuiWrite(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）\n`);
   };
 
-  // 命令候选菜单：输入 / 或 /xxx 时在输入行下方弹出，↑↓ 选择、回车执行
-  let menu: { candidates: string[]; index: number } | null = null;
+  // 命令候选菜单：输入 / 或 /xxx 时在输入行下方弹出，↑↓ 选择、回车执行；
+  // apply 存在时为"选择器模式"（如 /model）：回车调用 apply 而非提交行
+  let menu: { candidates: string[]; index: number; apply?: (pick: string) => void } | null = null;
   let menuLines = 0;
   // Ctrl+R 历史菜单数据（最近提交的输入，去重）
   let history: string[] = [];
@@ -238,15 +300,19 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   /** 绘制/刷新菜单（保存光标 → 清旧区 → 画新区 → 恢复光标） */
   const drawMenu = () => {
     if (!process.stdout.isTTY) return;
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
     process.stdout.write('\x1b[s');
+    // 清旧菜单区（信息区上方 menuLines 行，绝对行定位）
     for (let i = 0; i < menuLines; i++) {
-      process.stdout.write('\x1b[1B\x1b[1G\x1b[2K'); // 下1行 → 列1 → 清整行
+      process.stdout.write(`\x1b[${rows - 2 - i};1H\x1b[K`);
     }
     const n = menu ? menu.candidates.length : 0;
+    // 候选画在信息区上方（candidates[0] 在最上，末项紧贴状态行），与状态/输出隔离
     for (let i = 0; i < n; i++) {
-      process.stdout.write('\x1b[1B\x1b[1G');
-      const text = i === menu!.index ? `\x1b[7m${menu!.candidates[i]}\x1b[0m` : menu!.candidates[i]!;
-      process.stdout.write(`${text}\x1b[K`);
+      const row = rows - 1 - n + i;
+      const text = truncateByWidth(menu!.candidates[i]!, cols - 1);
+      process.stdout.write(`\x1b[${row};1H${i === menu!.index ? `\x1b[7m${text}\x1b[0m` : text}\x1b[K`);
     }
     menuLines = n;
     process.stdout.write('\x1b[u');
@@ -307,7 +373,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       if (next !== model) {
         model = next;
         session.setModel(next);
-        process.stdout.write(`\n已切换模型: ${next}\n`);
+        tuiWrite(`\n已切换模型: ${next}\n`);
       }
       refresh();
       return;
@@ -330,8 +396,13 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       }
       if (key.name === 'return') {
         const pick = menu.candidates[menu.index] ?? rl.line;
+        const apply = menu.apply;
         menu = null;
         drawMenu(); // 清空菜单区
+        if (apply) {
+          apply(pick); // 选择器模式（/model）：应用选中项，不提交行
+          return;
+        }
         // rl.line 类型标记 readonly，运行时为普通可写属性；提交行以它为准
         (rl as unknown as { line: string }).line = pick;
         origTtyWrite('\r', { name: 'return', ctrl: false, meta: false, shift: false, sequence: '\r' });
@@ -477,10 +548,10 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   const onSigint = () => {
     if (running) {
       session.abort(); // 中止当前运行（SC-1.9：Ctrl+C 可中断）
-      process.stdout.write('\n[已中止]\n');
+      tuiWrite('\n[已中止]\n');
       refresh();
     } else {
-      process.stdout.write('\n');
+      tuiWrite('\n');
       printSaveHint(); // 会话已持久化，可 -c 恢复
       rl.close();
       process.exit(0);
@@ -496,7 +567,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   /** 单条输入的处理（slash 命令 / Agent 任务）；hint 为可选提示（粘贴折叠时） */
   const processInput = async (input: string, hint?: string): Promise<void> => {
-    if (hint) process.stdout.write(`\x1b[33m${hint}\x1b[0m\n`);
+    if (hint) tuiWrite(`\x1b[33m${hint}\x1b[0m\n`);
 
     // 记录历史（去重相邻，Ctrl+R 用）
     if (input && history[history.length - 1] !== input) {
@@ -506,15 +577,34 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
     // 运行中拦截：非 slash 输入不执行（防缓冲误操作）；slash 命令放行（如 /exit /cost）
     if (running && !input.startsWith('/')) {
-      process.stdout.write('\x1b[33m任务运行中（Ctrl+C 中止后再输入）\x1b[0m\n');
+      tuiWrite('\x1b[33m任务运行中（Ctrl+C 中止后再输入）\x1b[0m\n');
       refresh();
+      return;
+    }
+
+    // /model 交互式选择器（A+B：↑↓ 选择 + Enter 应用 + Esc 取消，替代静态列表）
+    if (input === '/model') {
+      const startIdx = Math.max(0, availableModels.indexOf(model));
+      menu = {
+        candidates: availableModels,
+        index: startIdx,
+        apply: (pick) => {
+          if (pick !== model) {
+            model = pick;
+            session.setModel(pick);
+            tuiWrite(`已切换模型: ${pick}\n`);
+          }
+          refresh();
+        },
+      };
+      drawMenu();
       return;
     }
 
     // slash 命令（M2 会话命令为异步）
     const res = await handleSlash(input, slashCtx);
     if (res.handled) {
-      if (res.output) process.stdout.write(`${res.output}\n`);
+      if (res.output) tuiWrite(`${res.output}\n`);
       if (res.exitCode !== undefined) {
         printSaveHint(); // 会话已持久化，可 -c 恢复
         exitCode = res.exitCode;
@@ -535,10 +625,10 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       for await (const ev of session.run(expanded)) {
         logger?.log(ev);
         if (ev.type === 'message_update') {
-          // 流式逐 token 输出（含代码块围栏着色）
-          process.stdout.write(renderStreamingText(ev.content));
+          // 流式逐 token 输出（含代码块围栏着色；经 tuiWrite 分区）
+          tuiWrite(renderStreamingText(ev.content));
         } else {
-          renderEvent(ev);
+          tuiWrite(renderEventText(ev));
         }
         if (ev.type === 'agent_settled') {
           // 真实 usage 更新统计（替换原 tool_call 估算），并显示耗时/tokens
@@ -546,12 +636,12 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
           usage.completionTokens = ev.usage.completion_tokens ?? usage.completionTokens;
           usage.cacheReadTokens = ev.usage.cache_read_input_tokens ?? usage.cacheReadTokens;
           const elapsed = fmtDuration(Date.now() - turnStart);
-          process.stdout.write(`\x1b[90m(${elapsed} · ↑ ${fmtTokens(usage.promptTokens)} tokens)\x1b[0m`);
+          tuiWrite(`\x1b[90m(${elapsed} · ↑ ${fmtTokens(usage.promptTokens)} tokens)\x1b[0m`);
         }
       }
-      process.stdout.write('\n');
+      tuiWrite('\n');
     } catch (err) {
-      process.stdout.write(`\n\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m\n`);
+      tuiWrite(`\n\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m\n`);
     } finally {
       logger?.close();
       running = false;
@@ -583,8 +673,8 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     const input = rawLine.trim();
     if (!input) return;
     const now = Date.now();
-    // 同批粘贴（窗口内连续行）累积；slash 命令不参与折叠
-    if (pending !== null && shouldMergePaste(input, lastLineAt, now, PASTE_WINDOW_MS)) {
+    // 同批粘贴（窗口内连续行）累积；slash 命令（新行或已在 pending 批次内）不参与折叠
+    if (pending !== null && !pending.startsWith('/') && shouldMergePaste(input, lastLineAt, now, PASTE_WINDOW_MS)) {
       pending += ` ${input}`;
       pendingCount++;
       lastLineAt = now;

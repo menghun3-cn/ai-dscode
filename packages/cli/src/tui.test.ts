@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { costText, fmtTokens, fmtDuration, statusText, renderStreamingText, resetCodeFence, shouldMergePaste, type UsageStats } from './tui.js';
+import {
+  costText,
+  fmtTokens,
+  fmtDuration,
+  statusText,
+  statusBarText,
+  contextBar,
+  shortenPath,
+  renderStreamingText,
+  resetCodeFence,
+  shouldMergePaste,
+  type UsageStats,
+} from './tui.js';
 
 const usage: UsageStats = { promptTokens: 1_000_000, completionTokens: 1_000_000, cacheReadTokens: 1_000_000, cost: 0 };
 
@@ -70,6 +82,49 @@ describe('statusText（P1 交互优化 F：会话名/plan/busy）', () => {
     expect(t).toContain('deepseek-v4-flash');
     expect(t).toContain('1K/65.5K tok'); // fmtTokens(65536) = 65.5K
     expect(t).not.toContain('[plan]');
+  });
+});
+
+describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', () => {
+  it('contextBar 含进度条与剩余量', () => {
+    const bar = contextBar(32768, 65536);
+    expect(bar).toContain('█'); // 已用一半（10 格 5 实心）
+    expect(bar).toContain('░');
+    expect(bar).toContain('50%');
+    expect(bar).toContain('剩 32.8K'); // fmtTokens(32768) = 32.8K
+  });
+
+  it('contextBar 超窗钳制 100%', () => {
+    const bar = contextBar(100000, 65536);
+    expect(bar).toContain('100%');
+    expect(bar).toContain('剩 0');
+  });
+
+  it('shortenPath 截短保留末尾', () => {
+    const s = shortenPath('/a/b/c/proj', 10);
+    expect(s).toHaveLength(10);
+    expect(s.startsWith('…')).toBe(true);
+    expect(s).toContain('proj');
+    expect(shortenPath('/short', 10)).toBe('/short'); // 不超长原样
+  });
+
+  it('statusBarText 含路径截短 + 进度条 + 会话名/plan/busy', () => {
+    const longCwd = '/very/long/path/to/my/project/with/a/very/long/name';
+    const t = statusBarText({
+      model: 'deepseek-v4-flash',
+      cwd: longCwd,
+      usedTokens: 32768,
+      contextWindow: 65536,
+      name: '重构',
+      planActive: true,
+      busy: true,
+    });
+    expect(t).toContain('「重构」');
+    expect(t).toContain('[plan]');
+    expect(t).toContain('⏳');
+    expect(t).toContain('deepseek-v4-flash');
+    expect(t).toContain('剩 32.8K'); // 剩余量
+    expect(t).not.toContain(longCwd); // 路径已截短
   });
 });
 
