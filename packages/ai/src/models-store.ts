@@ -72,13 +72,16 @@ export function mergeModels(providers: Array<{ id: string; models: ModelDef[] }>
 }
 
 /** 启动时尝试合并远端目录：有 URL 则拉取更新缓存（失败静默，用旧缓存），无 URL 用内置 */
-export async function syncModelsStore(providers: Array<{ id: string; models: ModelDef[] }>): Promise<void> {
+export async function syncModelsStore(
+  providers: Array<{ id: string; models: ModelDef[] }>,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<void> {
   const url = modelsStoreUrl();
   const cached = await readModelsStore();
   mergeModels(providers, cached); // 先合并缓存（离线可用）
   if (url) {
     try {
-      const fresh = await updateModelsStore(url);
+      const fresh = await updateModelsStore(url, { fetchImpl: opts.fetchImpl });
       mergeModels(providers, fresh); // 拉取成功再合并新值
     } catch {
       // 网络失败：保留缓存合并结果（离线可用）

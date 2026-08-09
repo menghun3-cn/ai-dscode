@@ -99,9 +99,9 @@ describe('models-store（M3 P1：远端模型目录）', () => {
         { id: 'deepseek-chat', name: 'Chat', reasoning: false, contextWindow: 64, maxTokens: 8, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, input: ['text'] },
       ]),
     ];
-    // 有 URL 但拉取失败 → 用缓存（deepseek-newmodel 已在上个用例缓存）
+    // 有 URL 但拉取失败（注入确定性失败的 fetchImpl，不依赖真实网络）→ 用缓存
     process.env['DSCODE_MODELS_URL'] = 'https://example.com/models.json';
-    await syncModelsStore(providers);
+    await syncModelsStore(providers, { fetchImpl: fakeFetchFail as typeof fetch });
     expect(providers[0]!.models.some((m) => m.id === 'deepseek-newmodel')).toBe(true); // 来自缓存
   });
 });

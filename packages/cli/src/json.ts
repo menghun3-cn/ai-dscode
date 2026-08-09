@@ -6,8 +6,9 @@
 
 import process from 'node:process';
 import type { Writable } from 'node:stream';
-import type { AgentEvent, AgentSession } from '@dscode/core';
+import { createDebugLogger, type AgentEvent, type AgentSession } from '@dscode/core';
 import { resolvePrintPrompt } from './print.js';
+import { friendlyError } from './errors.js';
 
 export interface JsonStreams {
   output?: Writable;
@@ -48,15 +49,19 @@ export async function runJson(
   }
 
   let sawError = false;
+  const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
   try {
     for await (const ev of session.run(input)) {
+      logger?.log(ev);
       const line = serializeJsonEvent(ev);
       output.write(`${JSON.stringify(line)}\n`);
       if (ev.type === 'tool_result' && ev.isError) sawError = true;
     }
   } catch (err) {
-    output.write(`${JSON.stringify({ type: 'error', data: { message: err instanceof Error ? err.message : String(err) } })}\n`);
+    output.write(`${JSON.stringify({ type: 'error', data: { message: friendlyError(err) } })}\n`);
     return 1;
+  } finally {
+    logger?.close();
   }
   return sawError ? 1 : 0;
 }

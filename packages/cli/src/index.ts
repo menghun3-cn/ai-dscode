@@ -32,6 +32,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(`dscode 异常退出: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+  const msg = err instanceof Error ? err.message : String(err);
+  if (process.env['DSCODE_DEBUG'] === '1') {
+    // 仅 DEBUG 模式给堆栈（NFR-4 可观测），正常不裸栈给用户（横切项 P1 错误体验）
+    console.error(`dscode 异常退出: ${err instanceof Error ? (err.stack ?? msg) : msg}`);
+  } else {
+    console.error(`dscode 异常退出: ${msg}（DSCODE_DEBUG=1 可查看详细堆栈）`);
+  }
   process.exit(1);
 });

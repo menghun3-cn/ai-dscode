@@ -8,9 +8,11 @@
 import readline, { type Key } from 'node:readline';
 import process from 'node:process';
 import type { AgentEvent, AgentSession, ExtensionManager } from '@dscode/core';
+import { createDebugLogger } from '@dscode/core';
 import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { truncateByWidth } from './width.js';
+import { friendlyError } from './errors.js';
 import { PROVIDERS } from './build-session.js';
 
 export interface UsageStats {
@@ -402,9 +404,11 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     // Agent 任务：先展开 @文件 / !命令 注入（P1）
     running = true;
     const turnStart = Date.now();
+    const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
     try {
       const expanded = await expandInput(input, session.cwd);
       for await (const ev of session.run(expanded)) {
+        logger?.log(ev);
         if (ev.type === 'message_update') {
           // 流式逐 token 输出
           process.stdout.write(ev.content);
@@ -422,8 +426,9 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       }
       process.stdout.write('\n');
     } catch (err) {
-      process.stdout.write(`\n\x1b[31m任务异常: ${err instanceof Error ? err.message : String(err)}\x1b[0m\n`);
+      process.stdout.write(`\n\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m\n`);
     } finally {
+      logger?.close();
       running = false;
     }
     refresh();

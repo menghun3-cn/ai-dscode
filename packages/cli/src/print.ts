@@ -5,7 +5,8 @@
  */
 
 import process from 'node:process';
-import type { AgentSession } from '@dscode/core';
+import { createDebugLogger, type AgentSession } from '@dscode/core';
+import { friendlyError } from './errors.js';
 
 /** 读取 stdin（管道场景）；TTY 下返回空 */
 async function readStdin(): Promise<string> {
@@ -34,8 +35,10 @@ export async function runPrint(session: AgentSession, prompt: string | undefined
 
   let sawError = false;
   let content = '';
+  const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
   try {
     for await (const ev of session.run(input)) {
+      logger?.log(ev);
       if (ev.type === 'message_update') {
         content += ev.content;
         process.stdout.write(ev.content);
@@ -45,8 +48,10 @@ export async function runPrint(session: AgentSession, prompt: string | undefined
     }
     process.stdout.write('\n');
   } catch (err) {
-    process.stderr.write(`print 模式异常: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`print 模式异常: ${friendlyError(err)}\n`);
     return 1;
+  } finally {
+    logger?.close();
   }
 
   // 退出码反映成败（SC-1.8）：工具失败视为非零

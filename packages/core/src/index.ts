@@ -34,5 +34,6 @@ export * from './plan/plan.js';
 export * from './compact/compact.js';
 export * from './mcp/mcp-client.js';
 export * from './mcp/mcp-tools.js';
+export * from './observability/logger.js';
 
 export const CORE_PACKAGE_VERSION = '1.0.0';

@@ -11,7 +11,8 @@
 import process from 'node:process';
 import readline from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
-import type { AgentEvent, AgentSession } from '@dscode/core';
+import { createDebugLogger, type AgentEvent, type AgentSession } from '@dscode/core';
+import { friendlyError } from './errors.js';
 
 export interface RpcStreams {
   input?: Readable;
@@ -40,15 +41,19 @@ export async function runRpc(session: AgentSession, streams: RpcStreams = {}): P
   const handleSend = async (id: number, params: { prompt?: string }): Promise<void> => {
     const prompt = params?.prompt;
     if (!prompt) return void respondError(id, -32602, '缺少 prompt 参数');
+    const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
     try {
       let reply = '';
       for await (const ev of session.run(prompt)) {
+        logger?.log(ev);
         notify('event', { type: ev.type, ...summarizeEvent(ev) });
         if (ev.type === 'message_update') reply += ev.content;
       }
       respond(id, { reply });
     } catch (err) {
-      respondError(id, -32603, err instanceof Error ? err.message : String(err));
+      respondError(id, -32603, friendlyError(err));
+    } finally {
+      logger?.close();
     }
   };
 
