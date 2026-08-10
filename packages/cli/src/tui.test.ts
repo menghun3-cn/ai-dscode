@@ -86,18 +86,20 @@ describe('statusText（P1 交互优化 F：会话名/plan/busy）', () => {
 });
 
 describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', () => {
-  it('contextBar 含进度条与剩余量', () => {
+  it('contextBar 含进度条与剩余量（ASCII 兼容字符）', () => {
     const bar = contextBar(32768, 65536);
-    expect(bar).toContain('█'); // 已用一半（10 格 5 实心）
-    expect(bar).toContain('░');
+    expect(bar).toContain('[#####-----]'); // ASCII 块，不用 █/░（部分终端渲染为点）
     expect(bar).toContain('50%');
     expect(bar).toContain('剩 32.8K'); // fmtTokens(32768) = 32.8K
+    expect(bar).toContain('\x1b[32m'); // <60% 绿色
   });
 
   it('contextBar 超窗钳制 100%', () => {
     const bar = contextBar(100000, 65536);
+    expect(bar).toContain('[##########]');
     expect(bar).toContain('100%');
     expect(bar).toContain('剩 0');
+    expect(bar).toContain('\x1b[31m'); // >80% 红色
   });
 
   it('shortenPath 截短保留末尾', () => {

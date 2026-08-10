@@ -176,17 +176,20 @@ export function shortenPath(cwd: string, maxLen = 34): string {
   return `…${cwd.slice(-(maxLen - 1))}`;
 }
 
-/** 上下文进度条 + 已用/剩余（P1 交互优化 F：剩余量） */
+/** 上下文进度条 + 已用/剩余（P1 交互优化 F：剩余量）；ASCII 兼容字符 + 按占比着色 */
 export function contextBar(usedTokens: number, contextWindow: number): string {
   if (contextWindow <= 0) return '';
   const pct = Math.min(100, Math.round((usedTokens / contextWindow) * 100));
   const filled = Math.round((pct / 100) * 10);
-  const bar = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
+  // ASCII 兼容：█/░ 在部分 Windows 终端渲染为点，改用 #/-
+  const bar = `[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}]`;
   const remaining = Math.max(0, contextWindow - usedTokens);
-  return `${bar} ${fmtTokens(usedTokens)}/${fmtTokens(contextWindow)} (${pct}% · 剩 ${fmtTokens(remaining)})`;
+  // 按占比着色：<60% 绿 / 60-80% 黄 / >80% 红
+  const color = pct >= 80 ? '\x1b[31m' : pct >= 60 ? '\x1b[33m' : '\x1b[32m';
+  return `${color}${bar} ${fmtTokens(usedTokens)}/${fmtTokens(contextWindow)} (${pct}% · 剩 ${fmtTokens(remaining)})\x1b[0m`;
 }
 
-/** 增强状态行（信息区常驻）：⏳ · [plan] · 「会话名」 · 模型 · 路径 · 上下文进度 */
+/** 增强状态行（信息区常驻）：⏳ · [plan] · 「会话名」 · 模型 · 路径 · 上下文进度（分色） */
 export function statusBarText(opts: {
   model: string;
   cwd: string;
@@ -197,12 +200,12 @@ export function statusBarText(opts: {
   busy?: boolean;
 }): string {
   const parts = [
-    opts.busy ? '⏳' : '',
-    opts.planActive ? '[plan]' : '',
-    opts.name ? `「${opts.name}」` : '',
-    opts.model,
-    shortenPath(opts.cwd),
-    contextBar(opts.usedTokens, opts.contextWindow),
+    opts.busy ? '\x1b[33m⏳\x1b[0m' : '',
+    opts.planActive ? '\x1b[33m[plan]\x1b[0m' : '',
+    opts.name ? `\x1b[35m「${opts.name}」\x1b[0m` : '',
+    `\x1b[36m${opts.model}\x1b[0m`, // 模型：青
+    `\x1b[90m${shortenPath(opts.cwd)}\x1b[0m`, // 路径：灰
+    contextBar(opts.usedTokens, opts.contextWindow), // 进度条已按占比着色
   ].filter(Boolean);
   return parts.join(' · ');
 }
@@ -245,14 +248,14 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     process.stdout.write('\x1b[u');
   };
 
-  /** 重绘底部信息区：状态行固定于 rows-1（输入行 rows 由 anchorInput 锚定），光标回原位 */
+  /** 重绘底部信息区：状态行固定于最底行 rows（输入行 rows-1 由 anchorInput 锚定），光标回原位 */
   const drawInfoArea = () => {
     if (!process.stdout.isTTY) return;
     const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows || 24;
     process.stdout.write('\x1b[s');
     process.stdout.write(
-      `\x1b[${rows - 1};1H\x1b[K${truncateByWidth(
+      `\x1b[${rows};1H\x1b[K${truncateByWidth(
         statusBarText({
           model,
           cwd: session.cwd,
@@ -285,11 +288,11 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     anchorInput();
   };
 
-  /** 输入框锚定：光标移到最底行 rows 并让 readline 重画 prompt+line（提交后不乱屏的关键） */
+  /** 输入框锚定：光标移到倒数第二行 rows-1 并让 readline 重画 prompt+line（提交后不乱屏的关键） */
   const anchorInput = () => {
     if (!process.stdout.isTTY) return;
     const rows = process.stdout.rows || 24;
-    process.stdout.write(`\x1b[${rows};1H`);
+    process.stdout.write(`\x1b[${rows - 1};1H`);
     rl.prompt();
   };
 
