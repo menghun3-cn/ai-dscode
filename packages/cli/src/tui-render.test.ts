@@ -1,27 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { renderLayout, menuWindow, truncateAnsi, inputHeightOf, inputCursorToPos, parseSgrMouse, MENU_WINDOW, FIXED_ROWS, type TuiModel } from './tui-render.js';
+import { renderLayout, menuWindow, truncateAnsi, inputHeightOf, inputCursorToPos, parseSgrMouse, welcomeBox, MENU_WINDOW, FIXED_ROWS, type TuiModel } from './tui-render.js';
 
 function model(over: Partial<TuiModel> = {}): TuiModel {
   return { outputLines: [], input: '', inputCursor: 0, menu: null, status: '状态', busy: false, ...over };
 }
 
 describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）', () => {
-  it('帧结构：输出区 + 上分隔线 + 输入行 + 菜单保留区 + 下分隔线 + 状态行，共 rows 行', () => {
+  it('帧结构：输出区 + 运行状态行 + 上分隔线 + 输入行 + 菜单保留区 + 下分隔线 + 状态行，共 rows 行', () => {
     const frame = renderLayout(model(), 40, 20);
     expect(frame.lines.length).toBe(20);
-    const outputRows = 20 - FIXED_ROWS; // 12
-    expect(frame.lines[outputRows]!).toContain('─'); // 上分隔线
-    expect(frame.lines[outputRows + 1]!).toContain('dscode>'); // 输入行（prompt）
+    const outputRows = 20 - FIXED_ROWS; // 11
+    expect(frame.lines[outputRows]!).toBe(''); // 运行状态行（空闲空行）
+    expect(frame.lines[outputRows + 1]!).toContain('─'); // 上分隔线
+    expect(frame.lines[outputRows + 2]!).toContain('dscode>'); // 输入行（prompt）
     for (let i = 0; i < MENU_WINDOW; i++) {
-      expect(frame.lines[outputRows + 2 + i]).toBe(''); // 菜单区（无菜单时空行）
+      expect(frame.lines[outputRows + 3 + i]).toBe(''); // 菜单区（无菜单时空行）
     }
-    expect(frame.lines[outputRows + 2 + MENU_WINDOW]!).toContain('─'); // 下分隔线
-    expect(frame.lines[outputRows + 3 + MENU_WINDOW]!).toBe('状态'); // 状态行（最底）
+    expect(frame.lines[outputRows + 3 + MENU_WINDOW]!).toContain('─'); // 下分隔线
+    expect(frame.lines[outputRows + 4 + MENU_WINDOW]!).toBe('状态'); // 状态行（最底）
+  });
+
+  it('运行状态行：固定显示在输入框上方（运行中显示，空闲空行）', () => {
+    const idle = renderLayout(model(), 40, 20);
+    expect(idle.lines[20 - FIXED_ROWS]).toBe('');
+    const running = renderLayout(model({ runStatus: 'Running (6s · ↑ 2K tokens)' }), 40, 20);
+    expect(running.lines[20 - FIXED_ROWS]).toContain('Running');
+    expect(running.lines[20 - FIXED_ROWS]).toContain('tokens');
   });
 
   it('光标定位：输入行行号 + prompt 宽 + 输入光标列', () => {
     const frame = renderLayout(model({ input: 'ab', inputCursor: 1 }), 40, 20);
-    expect(frame.cursorRow).toBe(20 - FIXED_ROWS + 1); // 输入行在帧内位置
+    expect(frame.cursorRow).toBe(20 - FIXED_ROWS + 2); // 输入行在帧内位置（运行状态行 + 上分隔线之后）
     // prompt 可见宽 8（"dscode> "）+ 光标前 "a" 宽 1
     expect(frame.cursorCol).toBe(8 + 1);
   });
@@ -29,9 +38,9 @@ describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）
   it('输出区滚动：只显示尾部 outputRows 行', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
     const frame = renderLayout(model({ outputLines: lines }), 40, 20);
-    const outputRows = 20 - FIXED_ROWS;
-    // 帧的第 0 行应是第 30-12=18 行
-    expect(frame.lines[0]).toBe('行18');
+    const outputRows = 20 - FIXED_ROWS; // 11
+    // 帧的第 0 行应是第 30-11=19 行
+    expect(frame.lines[0]).toBe('行19');
     expect(frame.lines[outputRows - 1]).toBe('行29');
   });
 
@@ -39,16 +48,16 @@ describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）
     const m = model({ menu: { candidates: ['/model', '/cost'], index: 0 } });
     const frame = renderLayout(m, 60, 20);
     const outputRows = 20 - FIXED_ROWS;
-    expect(frame.lines[outputRows + 2]).toContain('→');
-    expect(frame.lines[outputRows + 2]).toContain('/model');
-    expect(frame.lines[outputRows + 3]).not.toContain('→'); // 未选中项无标记
-    expect(frame.lines[outputRows + 3]).toContain('/cost');
+    expect(frame.lines[outputRows + 3]).toContain('→');
+    expect(frame.lines[outputRows + 3]).toContain('/model');
+    expect(frame.lines[outputRows + 4]).not.toContain('→'); // 未选中项无标记
+    expect(frame.lines[outputRows + 4]).toContain('/cost');
   });
 
   it('busy 提示符显示 ⏳', () => {
     const frame = renderLayout(model({ busy: true }), 40, 20);
     const outputRows = 20 - FIXED_ROWS;
-    expect(frame.lines[outputRows + 1]).toContain('⏳');
+    expect(frame.lines[outputRows + 2]).toContain('⏳');
   });
 });
 
@@ -95,12 +104,12 @@ describe('inputHeightOf / inputCursorToPos（多行输入）', () => {
   });
   it('多行输入渲染：输入区随高度展开，光标在续行', () => {
     const frame = renderLayout(model({ input: '第一行\n第二行', inputCursor: 4 }), 60, 24);
-    const outputRows = 24 - (1 + 2 + MENU_WINDOW + 2); // 输入高度 2
-    // 输入区两行（首行带 prompt，续行缩进）
-    expect(frame.lines[outputRows + 1]).toContain('第一行');
-    expect(frame.lines[outputRows + 2]).toContain('第二行');
+    const outputRows = 24 - (1 + 2 + MENU_WINDOW + 3); // 运行状态行1 + 上分隔线1 + 输入2 + 菜单 + 下分隔线1 + 状态1
+    // 输入区两行（首行带 prompt，续行缩进）——运行状态行 + 上分隔线之后
+    expect(frame.lines[outputRows + 2]).toContain('第一行');
+    expect(frame.lines[outputRows + 3]).toContain('第二行');
     // 光标在续行（line=1）
-    expect(frame.cursorRow).toBe(outputRows + 1 + 1);
+    expect(frame.cursorRow).toBe(outputRows + 2 + 1);
   });
 });
 
@@ -108,9 +117,9 @@ describe('renderLayout（输出滚动回看）', () => {
   it('outputScroll 回看：窗口显示更早的行', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
     const frame = renderLayout(model({ outputLines: lines, outputScroll: 5 }), 40, 20);
-    const outputRows = 20 - FIXED_ROWS;
-    // scroll=5：窗口终点为 30-5=25，起点 25-12=13
-    expect(frame.lines[0]).toBe('行13');
+    const outputRows = 20 - FIXED_ROWS; // 11
+    // scroll=5：窗口终点为 30-5=25，起点 25-11=14
+    expect(frame.lines[0]).toBe('行14');
     expect(frame.lines[outputRows - 1]).toBe('行24');
   });
 });
@@ -124,5 +133,33 @@ describe('parseSgrMouse（鼠标滚轮事件解析）', () => {
     expect(parseSgrMouse('\x1b[A')).toBeNull(); // 方向键
     expect(parseSgrMouse('abc')).toBeNull();
     expect(parseSgrMouse('\x1b[<64;20;5')).toBeNull(); // 未完成序列
+  });
+});
+
+describe('welcomeBox（Codex 风格启动信息框，纯函数）', () => {
+  const opts = { version: '1.0.0', model: 'deepseek-v4-flash', cwd: 'D:\\code\\ai-dscode-site', approval: 'ask' };
+  it('框结构：顶/底边框 + 标题 + model/directory/permissions 字段', () => {
+    const box = welcomeBox(opts, 100);
+    const lines = box.split('\n');
+    expect(lines[0]!.startsWith('╭')).toBe(true);
+    expect(lines[lines.length - 1]!.startsWith('╰')).toBe(true);
+    expect(box).toContain('>_ dscode (v1.0.0)');
+    expect(box).toContain('model:       deepseek-v4-flash');
+    expect(box).toContain('directory:   D:\\code\\ai-dscode-site');
+    expect(box).toContain('permissions: ask');
+    // 所有行等宽（边框对齐）
+    const widths = new Set(lines.map((l) => l.length));
+    expect(widths.size).toBe(1);
+  });
+  it('模型名过长时省略 /model to change 提示', () => {
+    const box = welcomeBox({ ...opts, model: 'very-long-model-name-1234567890' }, 100);
+    expect(box).not.toContain('/model to change');
+    expect(box).toContain('very-long-model-name');
+  });
+  it('窄终端收缩内容宽不越界', () => {
+    const box = welcomeBox(opts, 30);
+    for (const line of box.split('\n')) {
+      expect(line.length).toBeLessThanOrEqual(30);
+    }
   });
 });

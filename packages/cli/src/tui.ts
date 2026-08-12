@@ -13,8 +13,9 @@ import { createDebugLogger } from '@dscode/core';
 import { handleSlash, commandCompletions, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
 import { friendlyError } from './errors.js';
+import { DSCCODE_VERSION } from './args.js';
 import { PROVIDERS } from './build-session.js';
-import { renderLayout, visibleLen, fixedRowsFor, type TuiModel } from './tui-render.js';
+import { renderLayout, visibleLen, fixedRowsFor, welcomeBox, type TuiModel } from './tui-render.js';
 import { updateMenuForLine, menuStep, menuClose, menuPick } from './tui-controller.js';
 
 export interface UsageStats {
@@ -48,6 +49,9 @@ let thinkingMode: 'stream' | 'fold' | 'off' = 'stream';
 /** 思考折叠去重状态：同一段思考只显示一次 [思考中…]，正文前换行分隔 */
 let reasoningShown = false;
 
+/** 流式思考已输出的标记：stream 模式下思考→正文前需换行分隔（根治"思考与正文连一行"） */
+let reasoningStreamed = false;
+
 /** 流式代码块围栏状态（跨 chunk 维护） */
 let codeFenceOpen = false;
 
@@ -55,6 +59,7 @@ let codeFenceOpen = false;
 export function resetCodeFence(): void {
   codeFenceOpen = false;
   reasoningShown = false;
+  reasoningStreamed = false;
 }
 
 /** 流式代码块围栏着色（返回 ANSI 渲染串） */
@@ -98,6 +103,7 @@ export function renderEventText(ev: AgentEvent): string {
         reasoningShown = true;
         return '\x1b[90m[思考中…]\x1b[0m';
       }
+      reasoningStreamed = true; // stream 模式：思考已流式输出，正文前需换行
       return `\x1b[90m${ev.content}\x1b[0m`;
     case 'tool_call':
       try {
@@ -229,6 +235,16 @@ export function titleBarText(opts: { name?: string; planActive?: boolean; busy?:
   return `\x1b[36m${parts.join(' · ')}\x1b[0m`;
 }
 
+/** 启动 ASCII logo（block 字体，对齐 Claude Code 欢迎布局） */
+const DSCCODE_LOGO = [
+  '██████╗ ███████╗ ██████╗ ██████╗ ██████╗ ███████╗',
+  '██╔══██╗██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+  '██║  ██║███████╗██║     ██║   ██║██║  ██║█████╗  ',
+  '██║  ██║╚════██║██║     ██║   ██║██║  ██║██╔══╝  ',
+  '██████╔╝███████║╚██████╗╚██████╔╝██████╔╝███████╗',
+  '╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+].join('\n');
+
 /** 终端行数：DSCODE_ROWS env 覆盖 > process.stdout 探测 > 默认 24 */
 export function ttyRows(): number {
   const env = Number(process.env['DSCODE_ROWS']);
@@ -248,14 +264,14 @@ export function shouldMergePaste(input: string, lastLineAt: number, now: number,
   return now - lastLineAt <= windowMs && !input.startsWith('/');
 }
 
-export async function runInteractive(session: AgentSession, extManager?: ExtensionManager): Promise<number> {
+export async function runInteractive(session: AgentSession, extManager?: ExtensionManager, approval: string = 'ask'): Promise<number> {
   // 终端信息启动时缓存一次（readline terminal 模式后查询可能阻塞，见启动挂起修复）
   const TTY = Boolean(process.stdout.isTTY);
   const ROWS = ttyRows();
   const COLS = ttyCols();
 
   // ---- 模型 + readline（输出到空 sink：readline 只做输入编辑，渲染完全由本层拥有） ----
-  const model: TuiModel = { outputLines: [], outputScroll: 0, input: '', inputCursor: 0, menu: null, status: '', busy: false };
+  const model: TuiModel = { outputLines: [], outputScroll: 0, input: '', inputCursor: 0, menu: null, status: '', runStatus: '', busy: false };
   const nullOut = new Writable({
     write(_chunk: unknown, _enc: unknown, cb: () => void): void {
       cb();
@@ -288,6 +304,10 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   };
 
   // ---- 渲染（模型 → 全帧 → alternate screen） ----
+  /** 输入框上方固定运行状态行文本（运行中实时：耗时 + token 累计） */
+  const runningStatusText = (elapsedMs: number): string =>
+    `\x1b[90mRunning (${fmtDuration(elapsedMs)} · ↑ ${fmtTokens(usage.promptTokens + usage.completionTokens)} tokens)\x1b[0m`;
+
   const setStatus = (): void => {
     const used = usage.promptTokens + usage.completionTokens;
     const window = contextWindowOf(modelId);
@@ -638,6 +658,12 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     usage.requests++;
     running = true;
     const turnStart = Date.now();
+    // 输入框上方固定实时运行状态行：耗时每秒跳动 + token 实时累计
+    model.runStatus = runningStatusText(0);
+    const runTimer = setInterval(() => {
+      model.runStatus = runningStatusText(Date.now() - turnStart);
+      render();
+    }, 1000);
     resetCodeFence();
     const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
     try {
@@ -645,8 +671,9 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       for await (const ev of session.run(expanded)) {
         logger?.log(ev);
         if (ev.type === 'message_update') {
-          const sep = reasoningShown ? '\n' : '';
+          const sep = reasoningShown || reasoningStreamed ? '\n' : '';
           reasoningShown = false;
+          reasoningStreamed = false;
           appendInline(`${sep}${renderStreamingText(ev.content)}`); // 流式正文内联
         } else if (ev.type === 'reasoning_update') {
           appendInline(renderEventText(ev)); // 灰色思考流式内联
@@ -664,8 +691,10 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     } catch (err) {
       appendLine(`\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m`);
     } finally {
+      clearInterval(runTimer); // 停止实时状态行更新
       logger?.close();
       running = false;
+      model.runStatus = ''; // 运行结束：清除固定状态行（恢复空行，布局不变）
     }
     setStatus();
     render();
@@ -744,7 +773,9 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   // ---- 启动 ----
   if (TTY) process.stdout.write('\x1b[?1049h'); // 进入 alternate screen
   if (TTY) process.stdout.write('\x1b[?1007h'); // alternate-scroll：滚轮→↑↓键序列（不启用鼠标捕获，原生选中保持可用，对齐 pi）
-  appendLine('dscode — 输入 /help 查看命令，/exit 退出');
+  appendLine(`\x1b[36m${DSCCODE_LOGO}\x1b[0m`); // ASCII logo（Claude Code 风格欢迎）
+  appendLine(welcomeBox({ version: DSCCODE_VERSION, model: modelId, cwd: session.cwd, approval }, COLS)); // Codex 风格信息框
+  appendLine(`\x1b[90m输入 /help 查看命令，/exit 退出\x1b[0m`);
   rl.resume(); // 唤醒 stdin
 
   await new Promise<void>((resolve) => {

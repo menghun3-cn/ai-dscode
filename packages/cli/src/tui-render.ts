@@ -41,13 +41,13 @@ export function inputHeightOf(input: string): number {
   return Math.min(Math.max(1, input.split('\n').length), MAX_INPUT_HEIGHT);
 }
 
-/** 底部固定区行数（随输入高度变化）：上分隔线1 + 输入 + 菜单 + 下分隔线1 + 状态1 */
+/** 底部固定区行数（随输入高度变化）：运行状态行1 + 上分隔线1 + 输入 + 菜单 + 下分隔线1 + 状态1 */
 export function fixedRowsFor(input: string): number {
-  return 1 + inputHeightOf(input) + MENU_WINDOW + 2;
+  return 1 + inputHeightOf(input) + MENU_WINDOW + 3;
 }
 
-/** 底部固定区行数（单行输入）：上分隔线1 + 输入1 + 菜单4 + 下分隔线1 + 状态1 */
-export const FIXED_ROWS = MENU_WINDOW + 4;
+/** 底部固定区行数（单行输入）：运行状态行1 + 上分隔线1 + 输入1 + 菜单4 + 下分隔线1 + 状态1 */
+export const FIXED_ROWS = MENU_WINDOW + 5;
 
 /** 输入光标（字符索引）→ 行号 + 该行内可见列（多行输入光标定位用） */
 export function inputCursorToPos(input: string, cursor: number): { line: number; col: number } {
@@ -123,6 +123,8 @@ export interface TuiModel {
   menu: TuiMenu | null;
   /** 状态行文本（含样式） */
   status: string;
+  /** 输入框上方的固定运行状态行（如 Running (6s · ↑ 2K tokens)；空=空闲） */
+  runStatus?: string;
   busy: boolean;
 }
 
@@ -167,6 +169,25 @@ export function truncateAnsi(text: string, maxCols: number): string {
   return hasAnsi ? `${out}\x1b[0m` : out;
 }
 
+/** Codex 风格欢迎信息框（启动时 logo 下方显示；纯函数可单测）。内容宽 48（顶框 49 虚线，对齐参考布局） */
+export function welcomeBox(opts: { version: string; model: string; cwd: string; approval: string }, cols: number): string {
+  const inner = Math.max(20, Math.min(48, cols - 5)); // 内容宽（受终端宽度约束，最小 20）
+  const fit = (s: string): string => truncateAnsi(s, inner);
+  const modelHint = '   /model to change';
+  let modelLine = `model:       ${opts.model}${modelHint}`;
+  if (visibleLen(modelLine) > inner) modelLine = `model:       ${opts.model}`; // 模型名过长时省略提示
+  const lines = [
+    `>_ dscode (v${opts.version})`,
+    '',
+    fit(modelLine),
+    fit(`directory:   ${opts.cwd}`),
+    fit(`permissions: ${opts.approval}`),
+  ];
+  const top = `╭${'─'.repeat(inner + 1)}╮`;
+  const bottom = `╰${'─'.repeat(inner + 1)}╯`;
+  return [top, ...lines.map((l) => `│ ${l.padEnd(inner)}│`), bottom].join('\n');
+}
+
 function promptText(busy: boolean): string {
   return busy ? '\x1b[33m⏳ dscode>\x1b[0m ' : '\x1b[32mdscode>\x1b[0m ';
 }
@@ -190,7 +211,7 @@ function menuRow(m: TuiModel, row: number, cols: number): string {
  */
 export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame {
   const inputHeight = inputHeightOf(m.input);
-  const fixedRows = 1 + inputHeight + MENU_WINDOW + 2; // 上分隔线 + 输入(动态高) + 菜单 + 下分隔线 + 状态
+  const fixedRows = 1 + inputHeight + MENU_WINDOW + 3; // 运行状态行1 + 上分隔线1 + 输入(动态高) + 菜单 + 下分隔线1 + 状态1
   const outputRows = Math.max(1, rows - fixedRows);
   // 输出窗口：向上回看 outputScroll 行（0=跟随最新，即尾部 outputRows 行）
   const scroll = Math.min(m.outputScroll ?? 0, Math.max(0, m.outputLines.length - outputRows));
@@ -200,6 +221,7 @@ export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame 
   for (let i = 0; i < outputRows; i++) {
     lines.push(truncateAnsi(tail[i] ?? '', cols));
   }
+  lines.push(truncateAnsi(m.runStatus ?? '', cols)); // 输入框上方固定运行状态行（运行中实时显示，空=空闲）
   lines.push(sepLine(cols)); // 上分隔线
   const prompt = promptText(m.busy);
   const inputSegs = m.input.split('\n');
@@ -214,9 +236,9 @@ export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame 
   lines.push(sepLine(cols)); // 下分隔线
   lines.push(truncateAnsi(m.status, cols)); // 状态行
 
-  // 硬件光标：定位到输入光标所在行/列（多行输入行号 + 行内列）
+  // 硬件光标：定位到输入光标所在行/列（运行状态行 + 上分隔线之后）
   const pos = inputCursorToPos(m.input, m.inputCursor);
-  const cursorRow = outputRows + 1 + pos.line;
+  const cursorRow = outputRows + 2 + pos.line;
   const cursorCol = (pos.line === 0 ? visibleLen(prompt) : 2) + pos.col;
   return { lines, cursorRow, cursorCol };
 }

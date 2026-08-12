@@ -1,7 +1,7 @@
 /**
  * 模式分发器（架构文档 §4.2.9、todos M1-S5）。
  * 按 args 分发：interactive（TUI）/ print / json / rpc。
- * json 占位（v1.0 落地）；rpc 已落地（todos M7）。
+ * json / rpc 均已落地（todos M7）。
  */
 
 import process from 'node:process';
@@ -60,7 +60,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
         console.error(rebuilt.authError ?? '会话构建失败');
         return 1;
       }
-      return runInteractive(rebuilt.session, rebuilt.extManager);
+      return runInteractive(rebuilt.session, rebuilt.extManager, args.approval);
     }
     console.error(authError ?? '会话构建失败');
     return 1;
@@ -76,7 +76,7 @@ export async function dispatch(args: CliArgs): Promise<number> {
     return runRpc(session); // JSON-RPC over stdio（todos M7）
   }
   // interactive（TUI）
-  return runInteractive(session, extManager);
+  return runInteractive(session, extManager, args.approval);
 }
 
 export { process };

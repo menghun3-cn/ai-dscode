@@ -88,7 +88,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     const tui = startTui();
     try {
       // ① 启动横幅渲染
-      expect(await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'))).toBe(true);
+      expect(await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'))).toBe(true);
       // ② /model 打开模型选择菜单（渲染输出含模型候选）
       tui.write('/model\r');
       expect(await waitFor(() => tui.getOutput().includes('deepseek'))).toBe(true);
@@ -105,7 +105,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.write('/help\r');
       expect(await waitFor(() => tui.getOutput().includes('/resume'))).toBe(true); // 命令列表渲染
     } finally {
@@ -117,7 +117,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.write('\x10'); // Ctrl+P（0x10）
       expect(await waitFor(() => tui.getOutput().includes('已切换模型'))).toBe(true);
     } finally {
@@ -129,7 +129,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.write('@p'); // cwd 含 package.json（仓库根）
       expect(await waitFor(() => tui.getOutput().includes('package.json'))).toBe(true);
     } finally {
@@ -141,7 +141,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.write('第一行\r第二行\r'); // 120ms 窗口内连续行 → 折叠
       expect(await waitFor(() => tui.getOutput().includes('已折叠为单行'))).toBe(true);
     } finally {
@@ -153,10 +153,10 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.p.resize(60, 20);
       await new Promise((r) => setTimeout(r, 500));
-      expect(tui.getOutput().includes('dscode — 输入 /help 查看命令')).toBe(true); // resize 后仍渲染
+      expect(tui.getOutput().includes('输入 /help 查看命令，/exit 退出')).toBe(true); // resize 后仍渲染
     } finally {
       if (tui.exitCode() === null) tui.kill();
     }
@@ -166,7 +166,7 @@ describe('TUI 真实 PTY 集成（ConPTY，成功标准：渲染输出可断言�
     if (!available()) return;
     const tui = startTui();
     try {
-      await waitFor(() => tui.getOutput().includes('dscode — 输入 /help 查看命令'));
+      await waitFor(() => tui.getOutput().includes('输入 /help 查看命令，/exit 退出'));
       tui.write('你好\r');
       expect(await waitFor(() => tui.getOutput().includes('> 你好'))).toBe(true); // 回显独占一行
     } finally {

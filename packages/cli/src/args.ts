@@ -98,8 +98,8 @@ export const HELP_TEXT = `dscode — DeepSeek 优先的命令行 AI 编码助手
       --api-key <key>      显式 API key（优先级最高）
       --approval <模式>     审批模式 read-only/ask/auto-edit/full-auto（默认 ask，M5-S5）
       --auto-edit          等价 --approval auto-edit（文件编辑不弹框，bash 危险命令仍确认）
-  -c, --continue           继续最近会话（v0.2 落地）
-  -r, --resume             浏览会话（v0.2 落地）
+  -c, --continue           继续最近会话
+  -r, --resume             浏览会话
   -v, --version            显示版本号
   -h, --help               显示帮助
       --tty-info           打印终端信息（isTTY/rows/columns）诊断 TUI 布局问题
