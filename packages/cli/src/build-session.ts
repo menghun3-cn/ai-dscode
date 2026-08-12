@@ -38,6 +38,13 @@ export interface BuildSessionResult {
   authError?: string;
 }
 
+/** TUI 注册的交互确认钩子（渲染器内模态确认：提示进输出区 + 拦截下一行；未注册时权限引擎回退 stderr 直写） */
+let tuiConfirmHook: ((message: string) => Promise<boolean>) | null = null;
+
+export function setTuiConfirmHook(hook: ((message: string) => Promise<boolean>) | null): void {
+  tuiConfirmHook = hook;
+}
+
 /** 全部可用 provider（DeepSeek 优先） */
 export const PROVIDERS = createDefaultProviders();
 
@@ -142,6 +149,9 @@ export async function buildSession(args: CliArgs): Promise<BuildSessionResult> {
     mode: args.approval,
     confirm: async (message) => {
       if (!process.stdin.isTTY) return false;
+      // TUI 注册的交互确认钩子（渲染器内模态：提示进输出区 + 拦截下一行，不直写 stdout——根治 TUI 错乱）
+      if (tuiConfirmHook) return tuiConfirmHook(message);
+      // 非 TUI 上下文回退：stderr 直写 + 独立 readline
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
       try {
         const answer = await rl.question(`${message} `);

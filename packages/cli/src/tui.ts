@@ -14,8 +14,8 @@ import { handleSlash, commandCompletions, type SlashCommandContext } from './com
 import { expandInput } from './expand.js';
 import { friendlyError } from './errors.js';
 import { DSCCODE_VERSION } from './args.js';
-import { PROVIDERS } from './build-session.js';
-import { renderLayout, visibleLen, fixedRowsFor, menuHeightOf, welcomeBox, type TuiModel } from './tui-render.js';
+import { PROVIDERS, setTuiConfirmHook } from './build-session.js';
+import { renderLayout, visibleLen, fixedRowsFor, menuHeightOf, parseSgrMouse, welcomeBox, type TuiModel } from './tui-render.js';
 import { updateMenuForLine, menuStep, menuClose, menuPick } from './tui-controller.js';
 
 export interface UsageStats {
@@ -271,7 +271,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   const COLS = ttyCols();
 
   // ---- 模型 + readline（输出到空 sink：readline 只做输入编辑，渲染完全由本层拥有） ----
-  const model: TuiModel = { outputLines: [], outputScroll: 0, input: '', inputCursor: 0, menu: null, status: '', runStatus: '', busy: false };
+  const model: TuiModel = { outputLines: [], outputAnchor: null, input: '', inputCursor: 0, menu: null, status: '', runStatus: '', busy: false };
   const nullOut = new Writable({
     write(_chunk: unknown, _enc: unknown, cb: () => void): void {
       cb();
@@ -366,12 +366,17 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     process.nextTick(doRender);
   };
 
-  /** 输出视口滚动（+ = 向上回看，- = 返回底部）；对齐 pi：滚轮经 alternate-scroll 翻译为 ↑↓ 后调用 */
+  /** 输出视口滚动（锚定语义，对齐 pi 的 sticky-footer 视口）：+ = 回看（视口锚定上移，流式追加不推走历史），- = 返回底部（到达即恢复跟随） */
   const scrollOutput = (delta: number): void => {
-    // 动态固定区（含菜单弹出高度）：菜单打开时输出视口更小，滚动上限随之收缩
-    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input, menuHeightOf(model)));
-    const max = Math.max(0, model.outputLines.length - outputRows);
-    model.outputScroll = Math.max(0, Math.min((model.outputScroll ?? 0) + delta, max));
+    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input, menuHeightOf(model))); // 动态固定区（含菜单弹出高度）
+    const maxStart = Math.max(0, model.outputLines.length - outputRows);
+    const current = model.outputAnchor === null || model.outputAnchor === undefined ? maxStart : Math.min(model.outputAnchor, maxStart);
+    if (delta > 0) {
+      model.outputAnchor = Math.max(0, current - delta); // 回看：视口起始前移（绝对锚定，追加不动）
+    } else {
+      const next = Math.min(maxStart, current - delta); // delta<0 向下：current + |delta|
+      model.outputAnchor = next >= maxStart ? null : next; // 到达底部 → 恢复跟随最新
+    }
     render();
   };
 
@@ -394,6 +399,16 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     setStatus();
     render();
   };
+
+  // 确认模态：权限确认走渲染器（提示进输出区 + 拦截下一行作为答案），不直写 stdout——根治 TUI 错乱
+  let pendingConfirm: { message: string; resolve: (v: boolean) => void } | null = null;
+  setTuiConfirmHook(
+    (message) =>
+      new Promise<boolean>((resolve) => {
+        appendLine(`\x1b[33m${message}（y/N）\x1b[0m`);
+        pendingConfirm = { message, resolve };
+      }),
+  );
 
   /** 输入行模型同步（readline 空 sink 下状态仍更新，渲染由我们做） */
   const syncInput = (): void => {
@@ -533,12 +548,31 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   // ---- 键盘拦截（readline _ttyWrite）：菜单/快捷键 → 更新模型 → render ----
   const origTtyWrite = rlAny._ttyWrite.bind(rl);
+  // SGR 鼠标序列缓冲（\x1b[<b;x;yM，可能分片到达）
+  let mouseBuf = '';
   rlAny._ttyWrite = (s: string | undefined, key: Key | undefined) => {
     // readline（Bun 实现）部分路径会传 undefined（鼠标序列分片/特殊按键）：防御，杜绝崩溃
     const sStr = typeof s === 'string' ? s : '';
     if (key === undefined || key === null) {
       origTtyWrite(sStr, key as never); // 非按键事件：交还原版处理
       return;
+    }
+    // SGR 鼠标事件：滚轮上/下（按钮 64/65）→ 调整输出回看（不传给 readline；物理 ↑↓ 留给历史输入）
+    // 注意：Bun 的 readline 会剥掉 \x1b[< 前缀再传（如 "0;9;35M"）——按 SGR 数字形状匹配，补回前缀解析，杜绝垃圾入输入行
+    const sgrShaped = sStr.startsWith('\x1b[<') || /^[\d;]+[Mm]$/.test(sStr);
+    if (sgrShaped || mouseBuf) {
+      mouseBuf += sStr;
+      const norm = mouseBuf.startsWith('\x1b[<') ? mouseBuf : `\x1b[<${mouseBuf}`; // 前缀被剥时补回
+      const ev = parseSgrMouse(norm);
+      if (ev) {
+        mouseBuf = '';
+        if (ev.button === 64 || ev.button === 65) {
+          scrollOutput(ev.button === 64 ? 3 : -3); // 滚轮上回看 3 行 / 滚轮下返回 3 行
+        }
+        return;
+      }
+      if (mouseBuf.length > 40) mouseBuf = ''; // 非鼠标序列，丢弃缓冲
+      return; // 部分序列等待更多字节
     }
     if (key.ctrl && key.name === 'r') {
       const candidates = history.slice(-15).reverse();
@@ -604,15 +638,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return;
       }
     }
-    // 对齐 pi alternate-scroll：滚轮被终端翻译为 ↑/↓ 键序列——输入框为空时 ↑↓ 滚动输出视口（原生选中已恢复）
-    if (key.name === 'up' && model.input === '') {
-      scrollOutput(3); // 滚轮上/↑：回看 3 行
-      return;
-    }
-    if (key.name === 'down' && model.input === '') {
-      scrollOutput(-3); // 滚轮下/↓：返回 3 行
-      return;
-    }
+    // ↑↓ 交给 readline：历史输入导航（菜单打开时上方分支已处理菜单导航）
     origTtyWrite(sStr, key);
     syncInput();
     // 菜单候选：/ 命令 或 @ 文件（TuiController 纯函数，可单测）
@@ -734,6 +760,15 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     if (total > 1) appendLine(`\x1b[33m（检测到 ${total} 行多行输入，已折叠为单行）\x1b[0m`);
   };
   rl.on('line', (rawLine) => {
+    // 确认模态：拦截下一行作为 y/N 答案（不进命令处理）
+    if (pendingConfirm) {
+      const { resolve } = pendingConfirm;
+      pendingConfirm = null;
+      const ok = /^y/i.test(rawLine.trim());
+      resolve(ok);
+      appendLine(`\x1b[90m→ ${ok ? '允许' : '拒绝'}\x1b[0m`);
+      return;
+    }
     const input = rawLine.trim();
     if (!input) return;
     const now = Date.now();
@@ -754,8 +789,9 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   // ---- 退出 ----
   const cleanup = (): void => {
+    setTuiConfirmHook(null); // 释放确认钩子（防泄漏到后续会话）
     if (TTY) {
-      process.stdout.write('\x1b[?25h\x1b[?1007l\x1b[?1049l'); // 显示光标 + 关闭 alternate-scroll + 退出 alternate screen
+      process.stdout.write('\x1b[?25h\x1b[?1000l\x1b[?1006l\x1b[?1049l'); // 显示光标 + 关闭鼠标捕获 + 退出 alternate screen
     }
   };
   const onSigint = (): void => {
@@ -773,7 +809,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   // ---- 启动 ----
   if (TTY) process.stdout.write('\x1b[?1049h'); // 进入 alternate screen
-  if (TTY) process.stdout.write('\x1b[?1007h'); // alternate-scroll：滚轮→↑↓键序列（不启用鼠标捕获，原生选中保持可用，对齐 pi）
+  if (TTY) process.stdout.write('\x1b[?1000h\x1b[?1006h'); // SGR 鼠标捕获：滚轮（64/65）与物理 ↑↓ 可区分——↑↓ 留给历史输入，滚轮滚动视口
   appendLine(`\x1b[36m${DSCCODE_LOGO}\x1b[0m`); // ASCII logo（Claude Code 风格欢迎）
   appendLine(welcomeBox({ version: DSCCODE_VERSION, model: modelId, cwd: session.cwd, approval }, COLS)); // Codex 风格信息框
   appendLine(`\x1b[90m输入 /help 查看命令，/exit 退出\x1b[0m`);

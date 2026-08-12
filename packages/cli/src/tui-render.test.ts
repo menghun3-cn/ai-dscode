@@ -126,13 +126,26 @@ describe('inputHeightOf / inputCursorToPos（多行输入）', () => {
 });
 
 describe('renderLayout（输出滚动回看）', () => {
-  it('outputScroll 回看：窗口显示更早的行', () => {
+  it('outputAnchor 回看：窗口显示锚定起点起的行', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
-    const frame = renderLayout(model({ outputLines: lines, outputScroll: 5 }), 40, 20);
+    const frame = renderLayout(model({ outputLines: lines, outputAnchor: 10 }), 40, 20);
     const outputRows = 20 - FIXED_ROWS; // 15（无菜单）
-    // scroll=5：窗口终点为 30-5=25，起点 25-15=10
+    // 锚定 10：窗口为 slice(10, 25)
     expect(frame.lines[0]).toBe('行10');
     expect(frame.lines[outputRows - 1]).toBe('行24');
+  });
+
+  it('回看锚定：输出追加时视口不动（流式期间滚轮回看可用，对齐 pi sticky-footer）', () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `行${i}`);
+    const m = model({ outputLines: lines, outputAnchor: 0 });
+    const f1 = renderLayout(m, 40, 20);
+    expect(f1.lines[0]).toBe('行0');
+    m.outputLines.push('行20', '行21'); // 流式追加
+    const f2 = renderLayout(m, 40, 20);
+    expect(f2.lines[0]).toBe('行0'); // 锚定视口不随追加移动（回看可用）
+    // 跟随模式（null）：窗口显示最新尾部
+    const follow = renderLayout(model({ outputLines: m.outputLines }), 40, 20);
+    expect(follow.lines[0]).toBe('行7'); // 22-15=7
   });
 });
 

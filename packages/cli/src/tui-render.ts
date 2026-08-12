@@ -118,8 +118,8 @@ export interface TuiMenu {
 export interface TuiModel {
   /** 输出区行（可含样式 ANSI；渲染时取尾部可视行，超宽截断） */
   outputLines: string[];
-  /** 输出区向上回看偏移（行数，0=跟随最新） */
-  outputScroll?: number;
+  /** 输出视口锚定（绝对起始行；null=跟随最新——回看后视口固定，流式追加不推走历史） */
+  outputAnchor?: number | null;
   /** 输入行内容 */
   input: string;
   /** 输入光标列（0-based，位于 input 内） */
@@ -219,10 +219,13 @@ export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame 
   const menuHeight = menuHeightOf(m); // 菜单动态高度（无菜单=0：输入框默认单行；弹出时输入框上移给候选项腾位，对齐 Pi）
   const fixedRows = 1 + inputHeight + menuHeight + 3; // 运行状态行1 + 上分隔线1 + 输入 + 菜单(动态) + 下分隔线1 + 状态1
   const outputRows = Math.max(1, rows - fixedRows);
-  // 输出窗口：向上回看 outputScroll 行（0=跟随最新，即尾部 outputRows 行）
-  const scroll = Math.min(m.outputScroll ?? 0, Math.max(0, m.outputLines.length - outputRows));
-  const end = m.outputLines.length - scroll;
-  const tail = m.outputLines.slice(Math.max(0, end - outputRows), end);
+  // 输出窗口：outputAnchor 为绝对起始行（null=跟随最新）；锚定后流式追加不移动视口（回看可用）
+  const maxStart = Math.max(0, m.outputLines.length - outputRows);
+  const start =
+    m.outputAnchor === null || m.outputAnchor === undefined
+      ? maxStart
+      : Math.max(0, Math.min(m.outputAnchor, maxStart));
+  const tail = m.outputLines.slice(start, start + outputRows);
   const lines: string[] = [];
   for (let i = 0; i < outputRows; i++) {
     lines.push(truncateAnsi(tail[i] ?? '', cols));
