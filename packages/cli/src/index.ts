@@ -19,12 +19,29 @@ async function main(): Promise<void> {
 
   if (args.version) {
     process.stdout.write(`dscode ${DSCCODE_VERSION}\n`);
-    return;
+    process.exit(0); // 显式退出：真实 TTY 下 stdin 保持打开，事件循环不会自然结束
+  }
+
+  // --tty-info：TUI 布局诊断（PowerShell 下 Bun 的 rows/columns/isTTY 可能不可靠，用户可核验实际值）
+  if (args.ttyInfo) {
+    const so = process.stdout as unknown as { isTTY?: boolean; rows?: number; columns?: number };
+    process.stdout.write(
+      [
+        `isTTY=${so.isTTY}`,
+        `stdout.rows=${so.rows ?? 'undefined'}`,
+        `stdout.columns=${so.columns ?? 'undefined'}`,
+        `DSCODE_ROWS=${process.env['DSCODE_ROWS'] ?? '(未设置)'}`,
+        `DSCODE_COLS=${process.env['DSCODE_COLS'] ?? '(未设置)'}`,
+        `TERM=${process.env['TERM'] ?? '(未设置)'}`,
+        `terminal=${process.env['WT_SESSION'] ? 'Windows Terminal' : process.env['ConEmuANSI'] ? 'ConEmu' : process.env['TERM_PROGRAM'] ?? '(未知)'}`,
+      ].join('\n') + '\n',
+    );
+    process.exit(0); // 显式退出：真实 TTY 下 stdin 保持打开，事件循环不会自然结束
   }
 
   if (args.help) {
     process.stdout.write(HELP_TEXT);
-    return;
+    process.exit(0);
   }
 
   const exitCode = await dispatch(args);

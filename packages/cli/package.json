@@ -8,7 +8,9 @@
   "bin": {
     "dscode": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
@@ -18,5 +20,8 @@
   "dependencies": {
     "@dscode/ai": "workspace:*",
     "@dscode/core": "workspace:*"
+  },
+  "devDependencies": {
+    "node-pty": "^1.1.0"
   }
 }

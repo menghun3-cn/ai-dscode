@@ -7,6 +7,7 @@ import {
   statusBarText,
   contextBar,
   shortenPath,
+  titleBarText,
   renderStreamingText,
   resetCodeFence,
   shouldMergePaste,
@@ -85,6 +86,21 @@ describe('statusText（P1 交互优化 F：会话名/plan/busy）', () => {
   });
 });
 
+describe('titleBarText（① 顶部标题栏）', () => {
+  it('含会话名 / [plan] / ⏳ 徽标', () => {
+    const t = titleBarText({ name: '重构', planActive: true, busy: true });
+    expect(t).toContain('dscode');
+    expect(t).toContain('「重构」');
+    expect(t).toContain('[plan]');
+    expect(t).toContain('⏳');
+  });
+
+  it('无徽标时仅应用名', () => {
+    expect(titleBarText({})).toContain('dscode');
+    expect(titleBarText({})).not.toContain('[plan]');
+  });
+});
+
 describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', () => {
   it('contextBar 含进度条与剩余量（ASCII 兼容字符）', () => {
     const bar = contextBar(32768, 65536);
@@ -110,13 +126,17 @@ describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', 
     expect(shortenPath('/short', 10)).toBe('/short'); // 不超长原样
   });
 
-  it('statusBarText 含路径截短 + 进度条 + 会话名/plan/busy', () => {
+  it('statusBarText 参考样式：左 cwd+usage 右 model 两端对齐', () => {
     const longCwd = '/very/long/path/to/my/project/with/a/very/long/name';
     const t = statusBarText({
       model: 'deepseek-v4-flash',
       cwd: longCwd,
-      usedTokens: 32768,
-      contextWindow: 65536,
+      usedTokens: 1000,
+      completionTokens: 500,
+      cacheReadTokens: 128,
+      requests: 3,
+      contextWindow: 10000,
+      cols: 100,
       name: '重构',
       planActive: true,
       busy: true,
@@ -124,8 +144,10 @@ describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', 
     expect(t).toContain('「重构」');
     expect(t).toContain('[plan]');
     expect(t).toContain('⏳');
-    expect(t).toContain('deepseek-v4-flash');
-    expect(t).toContain('剩 32.8K'); // 剩余量
+    expect(t).toContain('↑1K ↓500'); // ↑input ↓output
+    expect(t).toContain('R3 CH128');
+    expect(t).toContain('1.5K/10K (15%)'); // 已用/窗口 (pct)
+    expect(t).toContain('deepseek-v4-flash'); // 右端 model
     expect(t).not.toContain(longCwd); // 路径已截短
   });
 });

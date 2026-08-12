@@ -1,26 +1,28 @@
 /**
- * interactive TUI（原理-tui.md §6、todos M1-S5）。
- * MVP 最小边界：单行输入 + 滚动输出。readline terminal 模式提供
- * 行编辑与 Ctrl+C 信号；流式输出逐 token 写入 stdout。
- * P1 已落地：`@文件` 引用、`!命令` 注入（expand.ts）；中文宽度见 width.ts。
+ * interactive TUI（重构 v2：全屏差分渲染，对齐 pi 架构——组件 render→lines、模型驱动帧、alternate screen）。
+ * 渲染完全由本层拥有（readline 仅做输入编辑，输出到空 sink）——根治"增量 ANSI 修补 + readline 光标冲突"反复回归。
+ * 布局纯逻辑在 tui-render.ts（纯函数，可完整单测）。
  */
 
 import readline, { type Key } from 'node:readline';
 import process from 'node:process';
+import { Writable } from 'node:stream';
 import { readdirSync } from 'node:fs';
 import type { AgentEvent, AgentSession, ExtensionManager } from '@dscode/core';
 import { createDebugLogger } from '@dscode/core';
-import { handleSlash, commandCompletions, cycleMenuIndex, type SlashCommandContext } from './commands.js';
+import { handleSlash, commandCompletions, type SlashCommandContext } from './commands.js';
 import { expandInput } from './expand.js';
-import { truncateByWidth } from './width.js';
 import { friendlyError } from './errors.js';
 import { PROVIDERS } from './build-session.js';
+import { renderLayout, visibleLen, fixedRowsFor, type TuiModel } from './tui-render.js';
+import { updateMenuForLine, menuStep, menuClose, menuPick } from './tui-controller.js';
 
 export interface UsageStats {
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
   cost: number;
+  requests: number;
 }
 
 /** 模型单价（每百万 token USD）：从全部 provider 模型目录取（M3，SC-3.3） */
@@ -40,21 +42,22 @@ function rebuildModelCost(): void {
 }
 rebuildModelCost();
 
-/** reasoning 展示模式（/thinking 切换，SC-3.2）：stream=流式灰色 / fold=折叠一行 / off=隐藏 */
+/** reasoning 展示模式（/thinking 切换，SC-3.2）：stream=流式灰色 / fold=折叠一行 / off=隐藏；默认 stream */
 let thinkingMode: 'stream' | 'fold' | 'off' = 'stream';
 
-/** 流式代码块围栏状态（跨 chunk 维护，P1 交互优化 C） */
+/** 思考折叠去重状态：同一段思考只显示一次 [思考中…]，正文前换行分隔 */
+let reasoningShown = false;
+
+/** 流式代码块围栏状态（跨 chunk 维护） */
 let codeFenceOpen = false;
 
-/** 重置代码块围栏状态（每轮 agent 运行前调用，防围栏未闭合污染后续输出） */
+/** 重置代码块围栏状态（每轮 agent 运行前调用） */
 export function resetCodeFence(): void {
   codeFenceOpen = false;
+  reasoningShown = false;
 }
 
-/**
- * 渲染一段流式文本：识别 ``` 围栏，块内青色 + 块首语言标签 + 块尾闭合。
- * 返回 ANSI 渲染串（纯函数 + 模块态，便于单测）。
- */
+/** 流式代码块围栏着色（返回 ANSI 渲染串） */
 export function renderStreamingText(text: string): string {
   let out = '';
   let cursor = 0;
@@ -68,7 +71,6 @@ export function renderStreamingText(text: string): string {
     const before = text.slice(cursor, idx);
     out += codeFenceOpen ? `\x1b[36m${before}\x1b[0m` : before;
     if (!codeFenceOpen) {
-      // 打开围栏：块首语言标签（``` 后到行尾）
       const after = text.slice(idx + 3);
       const langEnd = after.indexOf('\n');
       const lang = (langEnd === -1 ? after : after.slice(0, langEnd)).trim();
@@ -76,7 +78,6 @@ export function renderStreamingText(text: string): string {
       codeFenceOpen = true;
       cursor = idx + 3 + (langEnd === -1 ? after.length : langEnd + 1);
     } else {
-      // 闭合围栏
       out += `\n\x1b[36m\`\`\`\x1b[0m\n`;
       codeFenceOpen = false;
       cursor = idx + 3;
@@ -85,29 +86,28 @@ export function renderStreamingText(text: string): string {
   return out;
 }
 
-/** 粘贴折叠判定：窗口内连续非 slash 行视为同批粘贴（P1 交互优化 A） */
-export function shouldMergePaste(input: string, lastLineAt: number, now: number, windowMs: number): boolean {
-  return now - lastLineAt <= windowMs && !input.startsWith('/');
-}
-
-/** 渲染一个 agent 事件为文本串（P1 分区：供 tuiWrite 统一输出） */
+/** 渲染一个 agent 事件为文本串 */
 export function renderEventText(ev: AgentEvent): string {
   switch (ev.type) {
     case 'message_update':
       return ev.content;
     case 'reasoning_update':
       if (thinkingMode === 'off') return '';
-      if (thinkingMode === 'fold') return '\x1b[90m[思考中…]\x1b[0m';
-      return `\x1b[90m${ev.content}\x1b[0m`; // 灰色展示思考过程
+      if (thinkingMode === 'fold') {
+        if (reasoningShown) return '';
+        reasoningShown = true;
+        return '\x1b[90m[思考中…]\x1b[0m';
+      }
+      return `\x1b[90m${ev.content}\x1b[0m`;
     case 'tool_call':
       try {
         const args = JSON.parse(ev.args) as Record<string, unknown>;
-        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${truncateByWidth(JSON.stringify(args), 200)}\n`;
+        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${JSON.stringify(args)}\n`;
       } catch {
-        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${truncateByWidth(ev.args, 200)}\n`;
+        return `\n\x1b[36m⚙ ${ev.toolName}\x1b[0m ${ev.args}\n`;
       }
     case 'tool_result':
-      if (ev.isError) return `\x1b[31m✗ ${truncateByWidth(ev.output, 300)}\x1b[0m\n`;
+      if (ev.isError) return `\x1b[31m✗ ${ev.output}\x1b[0m\n`;
       return '';
     default:
       return '';
@@ -148,7 +148,7 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-/** 底部状态栏文本：busy · [plan] · 会话名 · 模型 · 路径 · used/窗口 tok (占比) */
+/** 底部状态栏文本（兼容旧测试） */
 export function statusText(opts: {
   model: string;
   cwd: string;
@@ -176,167 +176,217 @@ export function shortenPath(cwd: string, maxLen = 34): string {
   return `…${cwd.slice(-(maxLen - 1))}`;
 }
 
-/** 上下文进度条 + 已用/剩余（P1 交互优化 F：剩余量）；ASCII 兼容字符 + 按占比着色 */
+/** 上下文进度条 + 已用/剩余（ASCII 兼容字符 + 按占比着色） */
 export function contextBar(usedTokens: number, contextWindow: number): string {
   if (contextWindow <= 0) return '';
   const pct = Math.min(100, Math.round((usedTokens / contextWindow) * 100));
   const filled = Math.round((pct / 100) * 10);
-  // ASCII 兼容：█/░ 在部分 Windows 终端渲染为点，改用 #/-
   const bar = `[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}]`;
   const remaining = Math.max(0, contextWindow - usedTokens);
-  // 按占比着色：<60% 绿 / 60-80% 黄 / >80% 红
   const color = pct >= 80 ? '\x1b[31m' : pct >= 60 ? '\x1b[33m' : '\x1b[32m';
   return `${color}${bar} ${fmtTokens(usedTokens)}/${fmtTokens(contextWindow)} (${pct}% · 剩 ${fmtTokens(remaining)})\x1b[0m`;
 }
 
-/** 增强状态行（信息区常驻）：⏳ · [plan] · 「会话名」 · 模型 · 路径 · 上下文进度（分色） */
+/** 增强状态行（分色） */
 export function statusBarText(opts: {
   model: string;
   cwd: string;
   usedTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  requests: number;
   contextWindow: number;
+  cols?: number;
   name?: string;
   planActive?: boolean;
   busy?: boolean;
 }): string {
-  const parts = [
+  const used = opts.usedTokens + opts.completionTokens;
+  const pct = opts.contextWindow > 0 ? Math.min(100, Math.round((used / opts.contextWindow) * 100)) : 0;
+  const leftParts = [
     opts.busy ? '\x1b[33m⏳\x1b[0m' : '',
     opts.planActive ? '\x1b[33m[plan]\x1b[0m' : '',
     opts.name ? `\x1b[35m「${opts.name}」\x1b[0m` : '',
-    `\x1b[36m${opts.model}\x1b[0m`, // 模型：青
-    `\x1b[90m${shortenPath(opts.cwd)}\x1b[0m`, // 路径：灰
-    contextBar(opts.usedTokens, opts.contextWindow), // 进度条已按占比着色
+    `\x1b[90m${shortenPath(opts.cwd)}\x1b[0m`,
+    `↑${fmtTokens(opts.usedTokens)} ↓${fmtTokens(opts.completionTokens)}`,
+    `R${opts.requests} CH${fmtTokens(opts.cacheReadTokens)}`,
+    `\x1b[36m${fmtTokens(used)}/${fmtTokens(opts.contextWindow)} (${pct}%)\x1b[0m`,
+  ].filter(Boolean).join(' ');
+  const right = `\x1b[32m${opts.model}\x1b[0m`;
+  const cols = opts.cols ?? 80;
+  const pad = Math.max(1, cols - visibleLen(leftParts) - visibleLen(right) - 1);
+  return `${leftParts}${' '.repeat(pad)}${right}`;
+}
+
+/** 顶部标题栏文本（保留导出兼容；标题栏已按用户要求移除，仅测试引用） */
+export function titleBarText(opts: { name?: string; planActive?: boolean; busy?: boolean }): string {
+  const parts = [
+    'dscode',
+    opts.name ? `「${opts.name}」` : '',
+    opts.planActive ? '\x1b[33m[plan]\x1b[0m' : '',
+    opts.busy ? '\x1b[33m⏳\x1b[0m' : '',
   ].filter(Boolean);
-  return parts.join(' · ');
+  return `\x1b[36m${parts.join(' · ')}\x1b[0m`;
+}
+
+/** 终端行数：DSCODE_ROWS env 覆盖 > process.stdout 探测 > 默认 24 */
+export function ttyRows(): number {
+  const env = Number(process.env['DSCODE_ROWS']);
+  if (Number.isFinite(env) && env > 0) return env;
+  return process.stdout.rows || 24;
+}
+
+/** 终端列数：DSCODE_COLS env 覆盖 > process.stdout 探测 > 默认 80 */
+export function ttyCols(): number {
+  const env = Number(process.env['DSCODE_COLS']);
+  if (Number.isFinite(env) && env > 0) return env;
+  return process.stdout.columns || 80;
+}
+
+/** 粘贴折叠判定：窗口内连续非 slash 行视为同批粘贴（防逐行误执行） */
+export function shouldMergePaste(input: string, lastLineAt: number, now: number, windowMs: number): boolean {
+  return now - lastLineAt <= windowMs && !input.startsWith('/');
 }
 
 export async function runInteractive(session: AgentSession, extManager?: ExtensionManager): Promise<number> {
-  // M3：全部 provider 的模型（跨 provider 统一编号，/model 与 Ctrl+P 用）
+  // 终端信息启动时缓存一次（readline terminal 模式后查询可能阻塞，见启动挂起修复）
+  const TTY = Boolean(process.stdout.isTTY);
+  const ROWS = ttyRows();
+  const COLS = ttyCols();
+
+  // ---- 模型 + readline（输出到空 sink：readline 只做输入编辑，渲染完全由本层拥有） ----
+  const model: TuiModel = { outputLines: [], outputScroll: 0, input: '', inputCursor: 0, menu: null, status: '', busy: false };
+  const nullOut = new Writable({
+    write(_chunk: unknown, _enc: unknown, cb: () => void): void {
+      cb();
+    },
+  });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: nullOut as unknown as NodeJS.WritableStream,
+    terminal: true,
+    prompt: '',
+  });
+  const rlAny = rl as unknown as { _ttyWrite: (s: string, key: Key) => void; line: string; cursor: number };
+
+  let modelId = session.model;
+  let running = false;
+  const usage: UsageStats = { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cost: 0, requests: 0 };
   let availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
   let allModelDefs = PROVIDERS.flatMap((p) => p.models);
-  const refreshModelLists = () => {
+  const refreshModelLists = (): void => {
     availableModels = PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
     allModelDefs = PROVIDERS.flatMap((p) => p.models);
   };
-  // P1 交互优化：运行中 busy 提示符（⏳）
-  const NORMAL_PROMPT = '\x1b[32mdscode>\x1b[0m ';
-  const BUSY_PROMPT = '\x1b[33m⏳ dscode>\x1b[0m ';
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-    prompt: NORMAL_PROMPT,
-    // 候选提示由下方命令菜单承载（↑↓ 选择），不再用 readline 自带 Tab 补全
-  });
-
-  let model = session.model;
-  let running = false;
-  const usage: UsageStats = { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cost: 0 };
-
-  const contextWindowOf = (modelId: string): number =>
-    allModelDefs.find((m) => m.id === modelId)?.contextWindow ?? 65536;
-
-  // P1 分区：底部信息区（2 行：状态行 + 提示/进度行）常驻重绘，与上方输出区隔离
-  const INFO_ROWS = 2;
-
-  /** 清空底部信息区（状态行 + 提示行） */
-  const clearInfoArea = () => {
-    if (!process.stdout.isTTY) return;
-    const rows = process.stdout.rows || 24;
-    process.stdout.write('\x1b[s');
-    process.stdout.write(`\x1b[${rows - 1};1H\x1b[K\x1b[${rows};1H\x1b[K`);
-    process.stdout.write('\x1b[u');
-  };
-
-  /** 重绘底部信息区：状态行固定于最底行 rows（输入行 rows-1 由 anchorInput 锚定），光标回原位 */
-  const drawInfoArea = () => {
-    if (!process.stdout.isTTY) return;
-    const cols = process.stdout.columns || 80;
-    const rows = process.stdout.rows || 24;
-    process.stdout.write('\x1b[s');
-    process.stdout.write(
-      `\x1b[${rows};1H\x1b[K${truncateByWidth(
-        statusBarText({
-          model,
-          cwd: session.cwd,
-          usedTokens: usage.promptTokens,
-          contextWindow: contextWindowOf(model),
-          name: session.name,
-          planActive: session.plan.isActive,
-          busy: running,
-        }),
-        cols - 1,
-      )}`,
-    );
-    process.stdout.write('\x1b[u');
-  };
-
-  /** 统一 TUI 输出：清信息区 → 写内容 → 重绘信息区（输出与信息区互不覆盖）；菜单开着则联动重绘 */
-  const tuiWrite = (text: string) => {
-    if (!text) return;
-    clearInfoArea();
-    process.stdout.write(text);
-    drawInfoArea();
-    if (menu) drawMenu();
-    anchorInput(); // 输入框锚定回最底行，readline 重画 prompt+line
-  };
-
-  const refresh = () => {
-    rl.setPrompt(running ? BUSY_PROMPT : NORMAL_PROMPT); // 运行中显示 busy 提示符
-    drawInfoArea();
-    if (menu) drawMenu();
-    anchorInput();
-  };
-
-  /** 输入框锚定：光标移到倒数第二行 rows-1 并让 readline 重画 prompt+line（提交后不乱屏的关键） */
-  const anchorInput = () => {
-    if (!process.stdout.isTTY) return;
-    const rows = process.stdout.rows || 24;
-    process.stdout.write(`\x1b[${rows - 1};1H`);
-    rl.prompt();
-  };
-
-  /** 退出提示：会话已持久化，可用 dscode -c 恢复（P1 交互优化 G） */
-  const printSaveHint = (): void => {
-    tuiWrite(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）\n`);
-  };
-
-  // 命令候选菜单：输入 / 或 /xxx 时在输入行下方弹出，↑↓ 选择、回车执行；
-  // apply 存在时为"选择器模式"（如 /model）：回车调用 apply 而非提交行
-  let menu: { candidates: string[]; index: number; apply?: (pick: string) => void } | null = null;
-  let menuLines = 0;
-  // Ctrl+R 历史菜单数据（最近提交的输入，去重）
+  const contextWindowOf = (id: string): number => allModelDefs.find((m) => m.id === id)?.contextWindow ?? 65536;
   let history: string[] = [];
+  let exitCode = 0;
 
-  /** 绘制/刷新菜单（保存光标 → 清旧区 → 画新区 → 恢复光标） */
-  const drawMenu = () => {
-    if (!process.stdout.isTTY) return;
-    const cols = process.stdout.columns || 80;
-    const rows = process.stdout.rows || 24;
-    process.stdout.write('\x1b[s');
-    // 清旧菜单区（信息区上方 menuLines 行，绝对行定位）
-    for (let i = 0; i < menuLines; i++) {
-      process.stdout.write(`\x1b[${rows - 2 - i};1H\x1b[K`);
-    }
-    const n = menu ? menu.candidates.length : 0;
-    // 候选画在信息区上方（candidates[0] 在最上，末项紧贴状态行），与状态/输出隔离
-    for (let i = 0; i < n; i++) {
-      const row = rows - 1 - n + i;
-      const text = truncateByWidth(menu!.candidates[i]!, cols - 1);
-      process.stdout.write(`\x1b[${row};1H${i === menu!.index ? `\x1b[7m${text}\x1b[0m` : text}\x1b[K`);
-    }
-    menuLines = n;
-    process.stdout.write('\x1b[u');
+  const setModelId = (id: string): void => {
+    modelId = id;
+    session.setModel(id);
   };
 
-  /** @文件 补全：匹配行尾 @前缀，返回"保留前缀的完整行替换"候选（P1 交互优化 E） */
+  // ---- 渲染（模型 → 全帧 → alternate screen） ----
+  const setStatus = (): void => {
+    const used = usage.promptTokens + usage.completionTokens;
+    const window = contextWindowOf(modelId);
+    const pct = window > 0 ? Math.min(100, Math.round((used / window) * 100)) : 0;
+    const leftParts = [
+      running ? '\x1b[33m⏳\x1b[0m' : '',
+      session.plan.isActive ? '\x1b[33m[plan]\x1b[0m' : '',
+      session.name ? `\x1b[35m「${session.name}」\x1b[0m` : '',
+      `\x1b[90m${shortenPath(session.cwd)}\x1b[0m`,
+      `↑${fmtTokens(usage.promptTokens)} ↓${fmtTokens(usage.completionTokens)}`,
+      `R${usage.requests} CH${fmtTokens(usage.cacheReadTokens)}`,
+      `\x1b[36m${fmtTokens(used)}/${fmtTokens(window)} (${pct}%)\x1b[0m`,
+    ].filter(Boolean).join(' ');
+    const right = `\x1b[32m${modelId}\x1b[0m`;
+    const pad = Math.max(1, COLS - visibleLen(leftParts) - visibleLen(right) - 1);
+    model.status = `${leftParts}${' '.repeat(pad)}${right}`;
+  };
+
+  /** 渲染完整帧（差分：对比上一帧只重写变更行，对齐 pi 差分渲染——修复流式闪烁） */
+  let prevFrame: ReturnType<typeof renderLayout> | null = null;
+  let renderScheduled = false;
+  const doRender = (): void => {
+    renderScheduled = false;
+    if (!TTY) return;
+    try {
+      const frame = renderLayout(model, COLS, ROWS);
+      process.stdout.write('\x1b[?25l'); // 隐藏光标（避免闪烁）
+      if (prevFrame) {
+        const prev = prevFrame.lines;
+        const cur = frame.lines;
+        const max = Math.max(prev.length, cur.length);
+        for (let i = 0; i < max; i++) {
+          if (prev[i] !== cur[i]) {
+            // 先清后写：\x1b[K 在内容前清除本行（含上一行超宽换行的残留碎片——"重复显示"根因）
+            process.stdout.write(`\x1b[${i + 1};1H\x1b[K${cur[i] ?? ''}`);
+          }
+        }
+      } else {
+        process.stdout.write('\x1b[1;1H'); // 首帧全量
+        for (let i = 0; i < frame.lines.length; i++) {
+          // 末行不加 \r\n：避免写到最后一行时触发终端滚动，导致帧内容上移 1 行（差分残留/重复显示根因）
+          const last = i === frame.lines.length - 1;
+          process.stdout.write(`\x1b[K${frame.lines[i]!}${last ? '' : '\r\n'}`);
+        }
+      }
+      prevFrame = frame;
+      process.stdout.write(`\x1b[${frame.cursorRow + 1};${frame.cursorCol + 1}H\x1b[?25h`); // 光标到输入行
+    } catch {
+      // 渲染异常不崩进程（模型状态边角情况）：跳过本帧，下帧重试
+    }
+  };
+  /** 批量渲染：同 tick 多次变更合并为一次（流式 chunk 高频调用时显著减少 I/O） */
+  const render = (): void => {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    process.nextTick(doRender);
+  };
+
+  /** 输出视口滚动（+ = 向上回看，- = 返回底部）；对齐 pi：滚轮经 alternate-scroll 翻译为 ↑↓ 后调用 */
+  const scrollOutput = (delta: number): void => {
+    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input));
+    const max = Math.max(0, model.outputLines.length - outputRows);
+    model.outputScroll = Math.max(0, Math.min((model.outputScroll ?? 0) + delta, max));
+    render();
+  };
+
+  /** 追加"新行"输出（离散输出：回显/结果/提示/错误——各占新行） */
+  const appendLine = (text: string): void => {
+    for (const seg of text.split('\n')) model.outputLines.push(seg);
+    setStatus();
+    render();
+  };
+
+  /** 追加"内联"输出（流式 chunk：续接到最后一行） */
+  const appendInline = (text: string): void => {
+    const lines = text.split('\n');
+    if (model.outputLines.length > 0) {
+      model.outputLines[model.outputLines.length - 1] += lines[0] ?? '';
+    } else {
+      model.outputLines.push(lines[0] ?? '');
+    }
+    for (let i = 1; i < lines.length; i++) model.outputLines.push(lines[i]!);
+    setStatus();
+    render();
+  };
+
+  /** 输入行模型同步（readline 空 sink 下状态仍更新，渲染由我们做） */
+  const syncInput = (): void => {
+    model.input = rlAny.line ?? '';
+    model.inputCursor = rlAny.cursor ?? 0;
+  };
+
+  /** @文件 补全（输入行 @前缀匹配 cwd） */
   const fileCompletions = (line: string): string[] => {
     const m = line.match(/@([^\s@]*)$/);
     if (!m) return [];
     const prefix = m[1]!;
     try {
-      const entries = readdirSync(session.cwd, { withFileTypes: true });
-      return entries
+      return readdirSync(session.cwd, { withFileTypes: true })
         .filter((e) => e.name.startsWith(prefix))
         .slice(0, 20)
         .map((e) => line.replace(/@[^\s@]*$/, `@${e.name}`));
@@ -345,105 +395,22 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     }
   };
 
-  /** 根据当前输入行刷新候选菜单（无候选则关闭） */
-  const updateMenu = (line: string) => {
-    const candidates = line.startsWith('/') ? commandCompletions(line, availableModels) : fileCompletions(line);
-    if (candidates.length > 0) {
-      if (!menu) {
-        menu = { candidates, index: 0 };
-      } else {
-        // 前缀变化：保留仍在候选中的选中项，否则重置
-        const cur = menu.candidates[menu.index];
-        menu.candidates = candidates;
-        menu.index = cur && candidates.includes(cur) ? candidates.indexOf(cur) : 0;
-      }
-      drawMenu();
-    } else if (menu) {
-      menu = null;
-      drawMenu(); // 清空旧菜单区
-    }
-  };
-
-  // 键盘拦截（readline 内部 _ttyWrite）：菜单激活时 ↑↓ 选择、回车执行、Esc 关闭
-  const rlAny = rl as unknown as { _ttyWrite: (s: string, key: Key) => void };
-  const origTtyWrite = rlAny._ttyWrite.bind(rl);
-  rlAny._ttyWrite = (s: string, key: Key) => {
-    // Ctrl+R：历史菜单（复用候选菜单机制，最近 15 条，最新在上）
-    if (key.ctrl && key.name === 'r') {
-      const candidates = history.slice(-15).reverse();
-      if (candidates.length > 0) {
-        menu = { candidates, index: 0 };
-        drawMenu();
-      }
-      return;
-    }
-    // Ctrl+P：循环切换模型（M3，SC-3.1）
-    if (key.ctrl && key.name === 'p') {
-      const idx = availableModels.indexOf(model);
-      const next = availableModels[(idx + 1) % availableModels.length] ?? model;
-      if (next !== model) {
-        model = next;
-        session.setModel(next);
-        tuiWrite(`\n已切换模型: ${next}\n`);
-      }
-      refresh();
-      return;
-    }
-    if (menu) {
-      if (key.name === 'up') {
-        menu.index = cycleMenuIndex(menu.index, -1, menu.candidates.length);
-        drawMenu();
-        return; // 不传给 readline（避免触发历史导航）
-      }
-      if (key.name === 'down') {
-        menu.index = cycleMenuIndex(menu.index, 1, menu.candidates.length);
-        drawMenu();
-        return;
-      }
-      if (key.name === 'escape') {
-        menu = null;
-        drawMenu(); // 清空菜单区
-        return;
-      }
-      if (key.name === 'return') {
-        const pick = menu.candidates[menu.index] ?? rl.line;
-        const apply = menu.apply;
-        menu = null;
-        drawMenu(); // 清空菜单区
-        if (apply) {
-          apply(pick); // 选择器模式（/model）：应用选中项，不提交行
-          return;
-        }
-        // rl.line 类型标记 readonly，运行时为普通可写属性；提交行以它为准
-        (rl as unknown as { line: string }).line = pick;
-        origTtyWrite('\r', { name: 'return', ctrl: false, meta: false, shift: false, sequence: '\r' });
-        return;
-      }
-    }
-    origTtyWrite(s, key);
-    updateMenu(rl.line); // 输入变化时实时刷新候选
-  };
-
   const slashCtx: SlashCommandContext = {
     get model() {
-      return model;
+      return modelId;
     },
     availableModels,
-    setModel: (id) => {
-      model = id;
-      session.setModel(id);
-    },
+    setModel: setModelId,
     clearMessages: () => {
       session.messages.length = 0;
     },
-    costText: () => costText(model, usage),
+    costText: () => costText(modelId, usage),
     get thinkingMode() {
       return thinkingMode;
     },
     setThinkingMode: (mode) => {
       thinkingMode = mode;
     },
-    // M3 P1：拉取远端模型目录并合并（/models-update）
     updateModelsStore: async () => {
       const { updateModelsStore, mergeModels, modelsStoreUrl } = await import('@dscode/ai');
       const url = modelsStoreUrl();
@@ -458,7 +425,6 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `模型目录拉取失败: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
-    // M4：扩展管理（/reload /extensions）
     extensions: {
       list: () => {
         if (!extManager) return '未装配扩展管理器';
@@ -479,7 +445,6 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `已热重载扩展：${apis.length} 个加载，工具 ${toolCount} · 命令 ${cmdCount}${errText}`;
       },
     },
-    // M4 P1：Skill 系统（/skill:<name> 加载指令注入上下文）
     skills: {
       apply: async (name) => {
         const ok = await session.applySkill(name);
@@ -487,12 +452,9 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       },
       list: async () => {
         const names = await session.listSkills();
-        return names.length > 0
-          ? `可用 skills:\n${names.map((n) => `  ${n}`).join('\n')}`
-          : '暂无 skills（放 ~/.dscode/skills/*.md 或 .dscode/skills/*.md）';
+        return names.length > 0 ? `可用 skills:\n${names.map((n) => `  ${n}`).join('\n')}` : '暂无 skills（放 ~/.dscode/skills/*.md 或 .dscode/skills/*.md）';
       },
     },
-    // M5：Plan 模式（/plan 只读 → /accept-plan 落地，SC-4.4）
     plan: {
       enter: () => {
         session.plan.enter();
@@ -508,7 +470,6 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `计划步骤已设置（${steps.length} 步）:\n${steps.map((s) => `  ${s.id} [${s.status}] ${s.title}`).join('\n')}`;
       },
     },
-    // M5：权限规则持久化（/allow /deny，M5 P1）
     permission: {
       allow: async (rule) => {
         const { addPermissionRule } = await import('@dscode/core');
@@ -521,9 +482,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         return `已拒绝并持久化: ${rule}（下次该操作直接拦截）`;
       },
     },
-    // M6：手动压缩（/compact，SC-5.2）
     compact: async (extra) => session.compact(extra),
-    // M2：会话操作（/resume /tree /fork /clone /name /export）
     session: {
       id: session.sessionId,
       get activeBranch() {
@@ -539,13 +498,8 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         const path = await import('node:path');
         const { renderSessionMarkdown, renderSessionHtml } = await import('./export.js');
         const branch = session.activeBranch;
-        const content = html
-          ? renderSessionHtml({ sessionId: session.sessionId, branch })
-          : renderSessionMarkdown({ sessionId: session.sessionId, branch });
-        const file = path.join(
-          session.cwd,
-          html ? `dscode-session-${session.sessionId.slice(0, 8)}.html` : `dscode-session-${session.sessionId.slice(0, 8)}.md`,
-        );
+        const content = html ? renderSessionHtml({ sessionId: session.sessionId, branch }) : renderSessionMarkdown({ sessionId: session.sessionId, branch });
+        const file = path.join(session.cwd, html ? `dscode-session-${session.sessionId.slice(0, 8)}.html` : `dscode-session-${session.sessionId.slice(0, 8)}.md`);
         await fs.writeFile(file, content, 'utf8');
         return file;
       },
@@ -556,117 +510,186 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     },
   };
 
-  const onSigint = () => {
-    if (running) {
-      session.abort(); // 中止当前运行（SC-1.9：Ctrl+C 可中断）
-      tuiWrite('\n[已中止]\n');
-      refresh();
-    } else {
-      tuiWrite('\n');
-      printSaveHint(); // 会话已持久化，可 -c 恢复
-      rl.close();
-      process.exit(0);
+  // ---- 键盘拦截（readline _ttyWrite）：菜单/快捷键 → 更新模型 → render ----
+  const origTtyWrite = rlAny._ttyWrite.bind(rl);
+  rlAny._ttyWrite = (s: string | undefined, key: Key | undefined) => {
+    // readline（Bun 实现）部分路径会传 undefined（鼠标序列分片/特殊按键）：防御，杜绝崩溃
+    const sStr = typeof s === 'string' ? s : '';
+    if (key === undefined || key === null) {
+      origTtyWrite(sStr, key as never); // 非按键事件：交还原版处理
+      return;
     }
+    if (key.ctrl && key.name === 'r') {
+      const candidates = history.slice(-15).reverse();
+      if (candidates.length > 0) {
+        model.menu = { candidates, index: 0 };
+        render();
+      }
+      return;
+    }
+    if (key.ctrl && key.name === 'p') {
+      const idx = availableModels.indexOf(modelId);
+      const next = availableModels[(idx + 1) % availableModels.length] ?? modelId;
+      if (next !== modelId) {
+        setModelId(next);
+        appendLine(`已切换模型: ${next}`);
+      }
+      return;
+    }
+    if (key.name === 'pageup') {
+      scrollOutput(ROWS - fixedRowsFor(model.input)); // 回看一屏
+      return;
+    }
+    if (key.name === 'pagedown') {
+      scrollOutput(-(ROWS - fixedRowsFor(model.input))); // 返回一屏
+      return;
+    }
+    if (key.name === 'return' && key.shift) {
+      // Shift+Enter：插入换行（多行输入，默认单行）
+      rlAny.line = rlAny.line.slice(0, rlAny.cursor) + '\n' + rlAny.line.slice(rlAny.cursor);
+      rlAny.cursor += 1;
+      syncInput();
+      render();
+      return;
+    }
+    if (model.menu) {
+      if (key.name === 'up') {
+        menuStep(model, -1);
+        render();
+        return;
+      }
+      if (key.name === 'down') {
+        menuStep(model, 1);
+        render();
+        return;
+      }
+      if (key.name === 'escape') {
+        menuClose(model);
+        render();
+        return;
+      }
+      if (key.name === 'return') {
+        const pick = menuPick(model) ?? rlAny.line;
+        const apply = model.menu?.apply;
+        menuClose(model);
+        if (apply) {
+          apply(pick);
+          render();
+          return;
+        }
+        rlAny.line = pick;
+        syncInput();
+        origTtyWrite('\r', { name: 'return', ctrl: false, meta: false, shift: false, sequence: '\r' });
+        return;
+      }
+    }
+    // 对齐 pi alternate-scroll：滚轮被终端翻译为 ↑/↓ 键序列——输入框为空时 ↑↓ 滚动输出视口（原生选中已恢复）
+    if (key.name === 'up' && model.input === '') {
+      scrollOutput(3); // 滚轮上/↑：回看 3 行
+      return;
+    }
+    if (key.name === 'down' && model.input === '') {
+      scrollOutput(-3); // 滚轮下/↓：返回 3 行
+      return;
+    }
+    origTtyWrite(sStr, key);
+    syncInput();
+    // 菜单候选：/ 命令 或 @ 文件（TuiController 纯函数，可单测）
+    updateMenuForLine(model, rlAny.line, (line) => (line.startsWith('/') ? commandCompletions(line, availableModels) : fileCompletions(line)));
+    render();
   };
 
-  rl.on('SIGINT', onSigint);
-  process.stdout.write('dscode — 输入 /help 查看命令，/exit 退出\n');
-  refresh();
-
-  // ---- 交互主循环（P1 交互优化：粘贴安全——快速连续多行折叠为单行，防逐行误执行） ----
-  const PASTE_WINDOW_MS = 120;
-
-  /** 单条输入的处理（slash 命令 / Agent 任务）；hint 为可选提示（粘贴折叠时） */
-  const processInput = async (input: string, hint?: string): Promise<void> => {
-    if (hint) tuiWrite(`\x1b[33m${hint}\x1b[0m\n`);
-
-    // 记录历史（去重相邻，Ctrl+R 用）
+  // ---- 单条输入处理（slash / agent） ----
+  const processInputInner = async (input: string): Promise<void> => {
     if (input && history[history.length - 1] !== input) {
       history.push(input);
       if (history.length > 50) history.shift();
     }
-
-    // 运行中拦截：非 slash 输入不执行（防缓冲误操作）；slash 命令放行（如 /exit /cost）
     if (running && !input.startsWith('/')) {
-      tuiWrite('\x1b[33m任务运行中（Ctrl+C 中止后再输入）\x1b[0m\n');
-      refresh();
+      appendLine('\x1b[33m任务运行中（Ctrl+C 中止后再输入）\x1b[0m');
       return;
     }
-
-    // /model 交互式选择器（A+B：↑↓ 选择 + Enter 应用 + Esc 取消，替代静态列表）
     if (input === '/model') {
-      const startIdx = Math.max(0, availableModels.indexOf(model));
-      menu = {
+      model.menu = {
         candidates: availableModels,
-        index: startIdx,
+        index: Math.max(0, availableModels.indexOf(modelId)),
         apply: (pick) => {
-          if (pick !== model) {
-            model = pick;
-            session.setModel(pick);
-            tuiWrite(`已切换模型: ${pick}\n`);
+          if (pick !== modelId) {
+            setModelId(pick);
+            appendLine(`已切换模型: ${pick}`);
           }
-          refresh();
         },
       };
-      drawMenu();
+      render();
       return;
     }
-
-    // slash 命令（M2 会话命令为异步）
     const res = await handleSlash(input, slashCtx);
     if (res.handled) {
-      if (res.output) tuiWrite(`${res.output}\n`);
+      if (res.output) appendLine(res.output);
       if (res.exitCode !== undefined) {
-        printSaveHint(); // 会话已持久化，可 -c 恢复
+        appendLine(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）`);
         exitCode = res.exitCode;
         rl.close();
-        return;
       }
-      refresh();
       return;
     }
-
-    // Agent 任务：先展开 @文件 / !命令 注入（P1）
+    // Agent 任务
+    appendLine(`\x1b[36m> ${input}\x1b[0m`);
+    usage.requests++;
     running = true;
     const turnStart = Date.now();
-    resetCodeFence(); // 每轮重置代码块围栏状态
+    resetCodeFence();
     const logger = createDebugLogger({ debug: process.env['DSCODE_DEBUG'] === '1', sessionId: session.sessionId });
     try {
       const expanded = await expandInput(input, session.cwd);
       for await (const ev of session.run(expanded)) {
         logger?.log(ev);
         if (ev.type === 'message_update') {
-          // 流式逐 token 输出（含代码块围栏着色；经 tuiWrite 分区）
-          tuiWrite(renderStreamingText(ev.content));
+          const sep = reasoningShown ? '\n' : '';
+          reasoningShown = false;
+          appendInline(`${sep}${renderStreamingText(ev.content)}`); // 流式正文内联
+        } else if (ev.type === 'reasoning_update') {
+          appendInline(renderEventText(ev)); // 灰色思考流式内联
         } else {
-          tuiWrite(renderEventText(ev));
+          appendLine(renderEventText(ev)); // 工具调用/结果：新行
         }
         if (ev.type === 'agent_settled') {
-          // 真实 usage 更新统计（替换原 tool_call 估算），并显示耗时/tokens
           usage.promptTokens = ev.usage.prompt_tokens ?? usage.promptTokens;
           usage.completionTokens = ev.usage.completion_tokens ?? usage.completionTokens;
           usage.cacheReadTokens = ev.usage.cache_read_input_tokens ?? usage.cacheReadTokens;
-          const elapsed = fmtDuration(Date.now() - turnStart);
-          tuiWrite(`\x1b[90m(${elapsed} · ↑ ${fmtTokens(usage.promptTokens)} tokens)\x1b[0m`);
+          appendLine(`\x1b[90m(${fmtDuration(Date.now() - turnStart)} · ↑ ${fmtTokens(usage.promptTokens)} tokens)\x1b[0m`);
         }
       }
-      tuiWrite('\n');
+      appendLine('');
     } catch (err) {
-      tuiWrite(`\n\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m\n`);
+      appendLine(`\x1b[31m任务异常: ${friendlyError(err)}\x1b[0m`);
     } finally {
       logger?.close();
       running = false;
     }
-    refresh();
+    setStatus();
+    render();
   };
 
-  let exitCode = 0;
+  /** 防御：processInput 任何未预期错误转为友好提示，绝不因未处理拒绝导致进程退出（Bun 对 unhandled rejection 直接退出） */
+  const processInput = async (input: string): Promise<void> => {
+    try {
+      await processInputInner(input);
+    } catch (err) {
+      try {
+        appendLine(`\x1b[31m内部错误: ${friendlyError(err)}\x1b[0m`);
+      } catch {
+        // 渲染崩溃等极端情况：静默
+      }
+    }
+  };
+
+  // ---- 粘贴安全输入循环 ----
+  const PASTE_WINDOW_MS = 120;
   let pending: string | null = null;
   let pendingCount = 0;
   let lastLineAt = 0;
   let flushTimer: NodeJS.Timeout | null = null;
-
-  /** 折叠累积的粘贴批次并执行（单行也经此统一出口） */
   const flushPending = (): void => {
     if (flushTimer) {
       clearTimeout(flushTimer);
@@ -677,34 +700,59 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     const merged = pending.trim();
     pending = null;
     pendingCount = 0;
-    void processInput(merged, total > 1 ? `（检测到 ${total} 行多行输入，已折叠为单行）` : undefined);
+    void processInput(merged).catch(() => {}); // .catch 兜底：防御未处理拒绝（Bun 会直接退出）
+    if (total > 1) appendLine(`\x1b[33m（检测到 ${total} 行多行输入，已折叠为单行）\x1b[0m`);
   };
-
   rl.on('line', (rawLine) => {
     const input = rawLine.trim();
     if (!input) return;
     const now = Date.now();
-    // 同批粘贴（窗口内连续行）累积；slash 命令（新行或已在 pending 批次内）不参与折叠
     if (pending !== null && !pending.startsWith('/') && shouldMergePaste(input, lastLineAt, now, PASTE_WINDOW_MS)) {
       pending += ` ${input}`;
       pendingCount++;
       lastLineAt = now;
     } else {
-      flushPending(); // 先执行旧批（窗口已过或遇到 slash）
+      flushPending();
       pending = input;
       pendingCount = 0;
       lastLineAt = now;
     }
     if (flushTimer) clearTimeout(flushTimer);
     flushTimer = setTimeout(flushPending, PASTE_WINDOW_MS);
+    syncInput(); // Enter 后 readline 已清空输入缓冲区，同步模型（修复输入行/光标残留）
   });
+
+  // ---- 退出 ----
+  const cleanup = (): void => {
+    if (TTY) {
+      process.stdout.write('\x1b[?25h\x1b[?1007l\x1b[?1049l'); // 显示光标 + 关闭 alternate-scroll + 退出 alternate screen
+    }
+  };
+  const onSigint = (): void => {
+    if (running) {
+      session.abort();
+      appendLine('[已中止]');
+    } else {
+      cleanup();
+      appendLine(`会话已保存：${session.sessionId.slice(0, 8)}…（dscode -c 可恢复）`);
+      rl.close();
+      process.exit(0);
+    }
+  };
+  rl.on('SIGINT', onSigint);
+
+  // ---- 启动 ----
+  if (TTY) process.stdout.write('\x1b[?1049h'); // 进入 alternate screen
+  if (TTY) process.stdout.write('\x1b[?1007h'); // alternate-scroll：滚轮→↑↓键序列（不启用鼠标捕获，原生选中保持可用，对齐 pi）
+  appendLine('dscode — 输入 /help 查看命令，/exit 退出');
+  rl.resume(); // 唤醒 stdin
 
   await new Promise<void>((resolve) => {
     rl.on('close', () => {
       flushPending();
+      cleanup();
       resolve();
     });
   });
-
   return exitCode;
 }

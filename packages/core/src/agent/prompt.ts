@@ -6,6 +6,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import type { Tool } from '../tool.js';
 
 export interface SystemPromptInput {
@@ -49,10 +50,21 @@ export async function assembleSystemPrompt(input: SystemPromptInput): Promise<st
 
   const prompt = parts.join('\n\n');
   if (input.debug) {
-    // eslint-disable-next-line no-console
-    console.error(`[dscode:debug] system prompt:\n${prompt}`);
+    // 写入 ~/.dscode/logs/tui-debug.log（NFR-4 观测）：不用 stderr——PowerShell 会把原生 stderr 包装成错误记录刷屏
+    await appendDebugLog(`[dscode:debug] system prompt:\n${prompt}`);
   }
   return prompt;
+}
+
+/** DSCODE_DEBUG 调试输出：写入 ~/.dscode/logs/tui-debug.log（与 tui.ts 的 dbg 同文件） */
+async function appendDebugLog(msg: string): Promise<void> {
+  try {
+    const dir = path.join(process.env['DSCODE_HOME'] ?? path.join(os.homedir(), '.dscode'), 'logs');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.appendFile(path.join(dir, 'tui-debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {
+    // 日志写失败不影响主流程
+  }
 }
 
 async function readDirTexts(dir: string): Promise<string[]> {

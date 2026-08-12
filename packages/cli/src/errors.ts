@@ -6,6 +6,10 @@
 
 export function friendlyError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  // 配置/鉴权类错误（404 模型或端点不存在 / 401 未授权 / 403 无权限）：重试无用，提示检查配置
+  if (/404|401|403|not found/i.test(msg)) {
+    return `${msg}（模型或网关配置问题：检查 DSCODE_MODEL 是否存在、DSCODE_BASE_URL（需以 /v1 结尾）、API key）`;
+  }
   const retryable = /429|50[0-9]|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed|请求失败|请求中止|网络|timeout|停滞/i.test(msg);
   return retryable
     ? `${msg}（网络或限流问题：稍后重试，或检查 DSCODE_BASE_URL / 代理）`

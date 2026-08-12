@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { friendlyError } from './errors.js';
 
 describe('friendlyError（横切项 P1：错误体验）', () => {
+  it('404/401/403 为配置类错误，提示检查模型/网关/key（非稍后重试）', () => {
+    const t = friendlyError(new Error('provider 请求失败: 404 Not Found'));
+    expect(t).toContain('DSCODE_MODEL'); // 配置指导
+    expect(t).not.toContain('稍后重试'); // 404 重试无用
+    expect(friendlyError('401 Unauthorized')).toContain('API key');
+    expect(friendlyError('403 Forbidden')).toContain('配置');
+  });
+
   it('网络/限流错误附"稍后重试"引导（429/断网）', () => {
     expect(friendlyError(new Error('请求失败: 429 Too Many Requests'))).toContain('稍后重试');
     expect(friendlyError(new Error('fetch failed: ECONNREFUSED'))).toContain('稍后重试');

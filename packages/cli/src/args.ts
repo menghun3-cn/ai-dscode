@@ -23,6 +23,8 @@ export interface CliArgs {
   resume: boolean;
   help: boolean;
   version: boolean;
+  /** --tty-info 打印终端信息（isTTY/rows/columns）诊断 TUI 布局问题 */
+  ttyInfo: boolean;
   /** 位置参数（第一个可作 prompt） */
   positionals: string[];
 }
@@ -45,6 +47,7 @@ export function parseArgs(argv: string[]): CliArgs {
       resume: { type: 'boolean', short: 'r' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
+      'tty-info': { type: 'boolean' },
     },
     allowPositionals: true,
     strict: false,
@@ -74,6 +77,7 @@ export function parseArgs(argv: string[]): CliArgs {
     resume: values['resume'] === true,
     help: values['help'] === true,
     version: values['version'] === true,
+    ttyInfo: values['tty-info'] === true,
     positionals,
   };
 }
@@ -98,6 +102,7 @@ export const HELP_TEXT = `dscode — DeepSeek 优先的命令行 AI 编码助手
   -r, --resume             浏览会话（v0.2 落地）
   -v, --version            显示版本号
   -h, --help               显示帮助
+      --tty-info           打印终端信息（isTTY/rows/columns）诊断 TUI 布局问题
 
 环境变量:
   DSCODE_API_KEY            API key（默认空；兼容 DEEPSEEK_API_KEY/DSAPI_API_KEY）

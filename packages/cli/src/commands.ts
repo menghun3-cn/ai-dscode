@@ -130,6 +130,7 @@ export async function handleSlash(input: string, ctx: SlashCommandContext): Prom
           '  /name <名字>  给当前会话命名',
           '  /export  导出当前会话为 markdown',
           '  /resume  列出本目录会话（重启后用 dscode -c/-r 恢复）',
+          '  TUI：PgUp/PgDn 或滚轮回看输出（输入框为空时 ↑↓ 亦可）；鼠标可直接拖拽选中复制',
         ].join('\n'),
       };
     case 'model': {

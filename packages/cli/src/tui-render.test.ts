@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest';
+import { renderLayout, menuWindow, truncateAnsi, inputHeightOf, inputCursorToPos, parseSgrMouse, MENU_WINDOW, FIXED_ROWS, type TuiModel } from './tui-render.js';
+
+function model(over: Partial<TuiModel> = {}): TuiModel {
+  return { outputLines: [], input: '', inputCursor: 0, menu: null, status: '状态', busy: false, ...over };
+}
+
+describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）', () => {
+  it('帧结构：输出区 + 上分隔线 + 输入行 + 菜单保留区 + 下分隔线 + 状态行，共 rows 行', () => {
+    const frame = renderLayout(model(), 40, 20);
+    expect(frame.lines.length).toBe(20);
+    const outputRows = 20 - FIXED_ROWS; // 12
+    expect(frame.lines[outputRows]!).toContain('─'); // 上分隔线
+    expect(frame.lines[outputRows + 1]!).toContain('dscode>'); // 输入行（prompt）
+    for (let i = 0; i < MENU_WINDOW; i++) {
+      expect(frame.lines[outputRows + 2 + i]).toBe(''); // 菜单区（无菜单时空行）
+    }
+    expect(frame.lines[outputRows + 2 + MENU_WINDOW]!).toContain('─'); // 下分隔线
+    expect(frame.lines[outputRows + 3 + MENU_WINDOW]!).toBe('状态'); // 状态行（最底）
+  });
+
+  it('光标定位：输入行行号 + prompt 宽 + 输入光标列', () => {
+    const frame = renderLayout(model({ input: 'ab', inputCursor: 1 }), 40, 20);
+    expect(frame.cursorRow).toBe(20 - FIXED_ROWS + 1); // 输入行在帧内位置
+    // prompt 可见宽 8（"dscode> "）+ 光标前 "a" 宽 1
+    expect(frame.cursorCol).toBe(8 + 1);
+  });
+
+  it('输出区滚动：只显示尾部 outputRows 行', () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
+    const frame = renderLayout(model({ outputLines: lines }), 40, 20);
+    const outputRows = 20 - FIXED_ROWS;
+    // 帧的第 0 行应是第 30-12=18 行
+    expect(frame.lines[0]).toBe('行18');
+    expect(frame.lines[outputRows - 1]).toBe('行29');
+  });
+
+  it('菜单渲染：→ 选中项 + 候选名在保留区，关闭时保留区空', () => {
+    const m = model({ menu: { candidates: ['/model', '/cost'], index: 0 } });
+    const frame = renderLayout(m, 60, 20);
+    const outputRows = 20 - FIXED_ROWS;
+    expect(frame.lines[outputRows + 2]).toContain('→');
+    expect(frame.lines[outputRows + 2]).toContain('/model');
+    expect(frame.lines[outputRows + 3]).not.toContain('→'); // 未选中项无标记
+    expect(frame.lines[outputRows + 3]).toContain('/cost');
+  });
+
+  it('busy 提示符显示 ⏳', () => {
+    const frame = renderLayout(model({ busy: true }), 40, 20);
+    const outputRows = 20 - FIXED_ROWS;
+    expect(frame.lines[outputRows + 1]).toContain('⏳');
+  });
+});
+
+describe('menuWindow（候选窗口滚动）', () => {
+  it('总数小于窗口：全显示', () => {
+    expect(menuWindow(0, 3, 4)).toEqual({ start: 0, end: 3 });
+  });
+  it('index 居中时窗口包含 index', () => {
+    const { start, end } = menuWindow(10, 20, 4);
+    expect(start).toBeLessThanOrEqual(10);
+    expect(end).toBeGreaterThan(10);
+  });
+  it('index 在开头：start=0', () => {
+    expect(menuWindow(0, 20, 4)).toEqual({ start: 0, end: 4 });
+  });
+  it('index 在末尾：窗口贴底', () => {
+    const { start, end } = menuWindow(19, 20, 4);
+    expect(end).toBe(20);
+    expect(start).toBe(16);
+  });
+});
+
+describe('truncateAnsi（ANSI 感知 + CJK 宽度截断）', () => {
+  it('中文按 2 列截断，不拆字', () => {
+    expect(truncateAnsi('你好世界', 4)).toBe('你好'); // 4 列 = 2 个中文
+    expect(truncateAnsi('你好世界', 3)).toBe('你'); // 3 列放不下第 2 个中文
+  });
+  it('ANSI 序列不计宽且保持完整', () => {
+    const out = truncateAnsi('\x1b[31m红色文字\x1b[0m', 5);
+    expect(out).toBe('\x1b[31m红色\x1b[0m'); // 4 列 + 完整 ANSI（不残缺）
+  });
+});
+
+describe('inputHeightOf / inputCursorToPos（多行输入）', () => {
+  it('输入高度：单行=1，按 \\n 数展开，上限 MAX_INPUT_HEIGHT', () => {
+    expect(inputHeightOf('abc')).toBe(1);
+    expect(inputHeightOf('a\nb')).toBe(2);
+    expect(inputHeightOf('1\n2\n3\n4\n5\n6\n7')).toBe(5); // 上限 5
+  });
+  it('光标定位：换行后行号 + 行内列', () => {
+    expect(inputCursorToPos('ab\ncd', 0)).toEqual({ line: 0, col: 0 });
+    expect(inputCursorToPos('ab\ncd', 3)).toEqual({ line: 1, col: 0 }); // 3 = 'a','b','\n' 之后
+    expect(inputCursorToPos('ab\ncd', 5)).toEqual({ line: 1, col: 2 }); // 行内 'cd' 结尾
+  });
+  it('多行输入渲染：输入区随高度展开，光标在续行', () => {
+    const frame = renderLayout(model({ input: '第一行\n第二行', inputCursor: 4 }), 60, 24);
+    const outputRows = 24 - (1 + 2 + MENU_WINDOW + 2); // 输入高度 2
+    // 输入区两行（首行带 prompt，续行缩进）
+    expect(frame.lines[outputRows + 1]).toContain('第一行');
+    expect(frame.lines[outputRows + 2]).toContain('第二行');
+    // 光标在续行（line=1）
+    expect(frame.cursorRow).toBe(outputRows + 1 + 1);
+  });
+});
+
+describe('renderLayout（输出滚动回看）', () => {
+  it('outputScroll 回看：窗口显示更早的行', () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
+    const frame = renderLayout(model({ outputLines: lines, outputScroll: 5 }), 40, 20);
+    const outputRows = 20 - FIXED_ROWS;
+    // scroll=5：窗口终点为 30-5=25，起点 25-12=13
+    expect(frame.lines[0]).toBe('行13');
+    expect(frame.lines[outputRows - 1]).toBe('行24');
+  });
+});
+
+describe('parseSgrMouse（鼠标滚轮事件解析）', () => {
+  it('滚轮上（按钮 64）/滚轮下（按钮 65）', () => {
+    expect(parseSgrMouse('\x1b[<64;20;5M')).toEqual({ button: 64, x: 20, y: 5 });
+    expect(parseSgrMouse('\x1b[<65;20;5m')).toEqual({ button: 65, x: 20, y: 5 }); // 释放态也可解析
+  });
+  it('非鼠标序列返回 null', () => {
+    expect(parseSgrMouse('\x1b[A')).toBeNull(); // 方向键
+    expect(parseSgrMouse('abc')).toBeNull();
+    expect(parseSgrMouse('\x1b[<64;20;5')).toBeNull(); // 未完成序列
+  });
+});
