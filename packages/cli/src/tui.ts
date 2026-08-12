@@ -15,7 +15,7 @@ import { expandInput } from './expand.js';
 import { friendlyError } from './errors.js';
 import { DSCCODE_VERSION } from './args.js';
 import { PROVIDERS } from './build-session.js';
-import { renderLayout, visibleLen, fixedRowsFor, welcomeBox, type TuiModel } from './tui-render.js';
+import { renderLayout, visibleLen, fixedRowsFor, menuHeightOf, welcomeBox, type TuiModel } from './tui-render.js';
 import { updateMenuForLine, menuStep, menuClose, menuPick } from './tui-controller.js';
 
 export interface UsageStats {
@@ -368,7 +368,8 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   /** 输出视口滚动（+ = 向上回看，- = 返回底部）；对齐 pi：滚轮经 alternate-scroll 翻译为 ↑↓ 后调用 */
   const scrollOutput = (delta: number): void => {
-    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input));
+    // 动态固定区（含菜单弹出高度）：菜单打开时输出视口更小，滚动上限随之收缩
+    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input, menuHeightOf(model)));
     const max = Math.max(0, model.outputLines.length - outputRows);
     model.outputScroll = Math.max(0, Math.min((model.outputScroll ?? 0) + delta, max));
     render();
@@ -557,11 +558,11 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       return;
     }
     if (key.name === 'pageup') {
-      scrollOutput(ROWS - fixedRowsFor(model.input)); // 回看一屏
+      scrollOutput(ROWS - fixedRowsFor(model.input, menuHeightOf(model))); // 回看一屏
       return;
     }
     if (key.name === 'pagedown') {
-      scrollOutput(-(ROWS - fixedRowsFor(model.input))); // 返回一屏
+      scrollOutput(-(ROWS - fixedRowsFor(model.input, menuHeightOf(model)))); // 返回一屏
       return;
     }
     if (key.name === 'return' && key.shift) {

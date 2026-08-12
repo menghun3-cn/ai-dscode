@@ -1,23 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { renderLayout, menuWindow, truncateAnsi, inputHeightOf, inputCursorToPos, parseSgrMouse, welcomeBox, MENU_WINDOW, FIXED_ROWS, type TuiModel } from './tui-render.js';
+import { renderLayout, menuWindow, truncateAnsi, inputHeightOf, inputCursorToPos, parseSgrMouse, welcomeBox, fixedRowsFor, MENU_WINDOW, FIXED_ROWS, type TuiModel } from './tui-render.js';
 
 function model(over: Partial<TuiModel> = {}): TuiModel {
   return { outputLines: [], input: '', inputCursor: 0, menu: null, status: '状态', busy: false, ...over };
 }
 
 describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）', () => {
-  it('帧结构：输出区 + 运行状态行 + 上分隔线 + 输入行 + 菜单保留区 + 下分隔线 + 状态行，共 rows 行', () => {
+  it('帧结构（无菜单，默认单行）：输出区 + 运行状态行 + 上分隔线 + 输入行 + 下分隔线 + 状态行，共 rows 行', () => {
     const frame = renderLayout(model(), 40, 20);
     expect(frame.lines.length).toBe(20);
-    const outputRows = 20 - FIXED_ROWS; // 11
+    const outputRows = 20 - FIXED_ROWS; // 15（无菜单：运行状态行1+上分隔线1+输入1+下分隔线1+状态1）
     expect(frame.lines[outputRows]!).toBe(''); // 运行状态行（空闲空行）
     expect(frame.lines[outputRows + 1]!).toContain('─'); // 上分隔线
     expect(frame.lines[outputRows + 2]!).toContain('dscode>'); // 输入行（prompt）
-    for (let i = 0; i < MENU_WINDOW; i++) {
-      expect(frame.lines[outputRows + 3 + i]).toBe(''); // 菜单区（无菜单时空行）
-    }
-    expect(frame.lines[outputRows + 3 + MENU_WINDOW]!).toContain('─'); // 下分隔线
-    expect(frame.lines[outputRows + 4 + MENU_WINDOW]!).toBe('状态'); // 状态行（最底）
+    expect(frame.lines[outputRows + 3]!).toContain('─'); // 下分隔线（无菜单时紧邻输入行）
+    expect(frame.lines[outputRows + 4]!).toBe('状态'); // 状态行（最底）
+  });
+
+  it('菜单弹出时输入框上移（动态布局，对齐 Pi）：菜单区出现在输入框下方', () => {
+    const base = model();
+    const closed = renderLayout(base, 40, 20);
+    const open = renderLayout(model({ menu: { candidates: ['/model', '/cost'], index: 0 } }), 40, 20);
+    // 菜单打开：固定区 +MENU_WINDOW 行 → 输入行绝对位置上移
+    expect(open.cursorRow).toBe(closed.cursorRow - MENU_WINDOW);
+    // 菜单区在输入框下分隔线之后渲染候选
+    expect(open.lines[open.cursorRow + 1]).toContain('─'); // 输入行下一行是下分隔线
+    expect(open.lines[open.cursorRow + 2]).toContain('/model'); // 下分隔线之后是菜单第 1 项
+    // 菜单关闭：恢复单行（无菜单区）
+    expect(closed.lines[closed.cursorRow + 1]).toContain('─'); // 输入行下一行是下分隔线
   });
 
   it('运行状态行：固定显示在输入框上方（运行中显示，空闲空行）', () => {
@@ -38,20 +48,22 @@ describe('renderLayout（纯函数全帧渲染，对齐 pi 差分渲染架构）
   it('输出区滚动：只显示尾部 outputRows 行', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
     const frame = renderLayout(model({ outputLines: lines }), 40, 20);
-    const outputRows = 20 - FIXED_ROWS; // 11
-    // 帧的第 0 行应是第 30-11=19 行
-    expect(frame.lines[0]).toBe('行19');
+    const outputRows = 20 - FIXED_ROWS; // 15（无菜单）
+    // 帧的第 0 行应是第 30-15=15 行
+    expect(frame.lines[0]).toBe('行15');
     expect(frame.lines[outputRows - 1]).toBe('行29');
   });
 
-  it('菜单渲染：→ 选中项 + 候选名在保留区，关闭时保留区空', () => {
+  it('菜单渲染：→ 选中项 + 候选名在输入框下分隔线下方，无菜单时无菜单区', () => {
     const m = model({ menu: { candidates: ['/model', '/cost'], index: 0 } });
     const frame = renderLayout(m, 60, 20);
-    const outputRows = 20 - FIXED_ROWS;
-    expect(frame.lines[outputRows + 3]).toContain('→');
-    expect(frame.lines[outputRows + 3]).toContain('/model');
-    expect(frame.lines[outputRows + 4]).not.toContain('→'); // 未选中项无标记
-    expect(frame.lines[outputRows + 4]).toContain('/cost');
+    const outputRows = 20 - fixedRowsFor('', MENU_WINDOW); // 11（菜单打开：+MENU_WINDOW 行）
+    expect(frame.lines[outputRows + 2]).toContain('dscode>'); // 输入行（上移）
+    expect(frame.lines[outputRows + 3]).toContain('─'); // 输入框下分隔线
+    expect(frame.lines[outputRows + 4]).toContain('→');
+    expect(frame.lines[outputRows + 4]).toContain('/model');
+    expect(frame.lines[outputRows + 5]).not.toContain('→'); // 未选中项无标记
+    expect(frame.lines[outputRows + 5]).toContain('/cost');
   });
 
   it('busy 提示符显示 ⏳', () => {
@@ -104,7 +116,7 @@ describe('inputHeightOf / inputCursorToPos（多行输入）', () => {
   });
   it('多行输入渲染：输入区随高度展开，光标在续行', () => {
     const frame = renderLayout(model({ input: '第一行\n第二行', inputCursor: 4 }), 60, 24);
-    const outputRows = 24 - (1 + 2 + MENU_WINDOW + 3); // 运行状态行1 + 上分隔线1 + 输入2 + 菜单 + 下分隔线1 + 状态1
+    const outputRows = 24 - fixedRowsFor('第一行\n第二行'); // 18（无菜单：运行状态行1+上分隔线1+输入2+下分隔线1+状态1）
     // 输入区两行（首行带 prompt，续行缩进）——运行状态行 + 上分隔线之后
     expect(frame.lines[outputRows + 2]).toContain('第一行');
     expect(frame.lines[outputRows + 3]).toContain('第二行');
@@ -117,9 +129,9 @@ describe('renderLayout（输出滚动回看）', () => {
   it('outputScroll 回看：窗口显示更早的行', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `行${i}`);
     const frame = renderLayout(model({ outputLines: lines, outputScroll: 5 }), 40, 20);
-    const outputRows = 20 - FIXED_ROWS; // 11
-    // scroll=5：窗口终点为 30-5=25，起点 25-11=14
-    expect(frame.lines[0]).toBe('行14');
+    const outputRows = 20 - FIXED_ROWS; // 15（无菜单）
+    // scroll=5：窗口终点为 30-5=25，起点 25-15=10
+    expect(frame.lines[0]).toBe('行10');
     expect(frame.lines[outputRows - 1]).toBe('行24');
   });
 });

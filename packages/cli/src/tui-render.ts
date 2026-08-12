@@ -41,13 +41,18 @@ export function inputHeightOf(input: string): number {
   return Math.min(Math.max(1, input.split('\n').length), MAX_INPUT_HEIGHT);
 }
 
-/** 底部固定区行数（随输入高度变化）：运行状态行1 + 上分隔线1 + 输入 + 菜单 + 下分隔线1 + 状态1 */
-export function fixedRowsFor(input: string): number {
-  return 1 + inputHeightOf(input) + MENU_WINDOW + 3;
+/** 底部固定区行数（随输入/菜单高度动态变化，对齐 Pi）：运行状态行1 + 上分隔线1 + 输入 + 菜单(动态) + 下分隔线1 + 状态1 */
+export function fixedRowsFor(input: string, menuHeight = 0): number {
+  return 1 + inputHeightOf(input) + menuHeight + 3;
 }
 
-/** 底部固定区行数（单行输入）：运行状态行1 + 上分隔线1 + 输入1 + 菜单4 + 下分隔线1 + 状态1 */
-export const FIXED_ROWS = MENU_WINDOW + 5;
+/** 底部固定区行数（单行输入 + 无菜单）：运行状态行1 + 上分隔线1 + 输入1 + 下分隔线1 + 状态1 */
+export const FIXED_ROWS = 5;
+
+/** 菜单动态高度：菜单打开且有候选 = MENU_WINDOW，否则 0（输入框默认单行，弹出时上移） */
+export function menuHeightOf(m: { menu?: TuiMenu | null }): number {
+  return m.menu && m.menu.candidates.length > 0 ? MENU_WINDOW : 0;
+}
 
 /** 输入光标（字符索引）→ 行号 + 该行内可见列（多行输入光标定位用） */
 export function inputCursorToPos(input: string, cursor: number): { line: number; col: number } {
@@ -211,7 +216,8 @@ function menuRow(m: TuiModel, row: number, cols: number): string {
  */
 export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame {
   const inputHeight = inputHeightOf(m.input);
-  const fixedRows = 1 + inputHeight + MENU_WINDOW + 3; // 运行状态行1 + 上分隔线1 + 输入(动态高) + 菜单 + 下分隔线1 + 状态1
+  const menuHeight = menuHeightOf(m); // 菜单动态高度（无菜单=0：输入框默认单行；弹出时输入框上移给候选项腾位，对齐 Pi）
+  const fixedRows = 1 + inputHeight + menuHeight + 3; // 运行状态行1 + 上分隔线1 + 输入 + 菜单(动态) + 下分隔线1 + 状态1
   const outputRows = Math.max(1, rows - fixedRows);
   // 输出窗口：向上回看 outputScroll 行（0=跟随最新，即尾部 outputRows 行）
   const scroll = Math.min(m.outputScroll ?? 0, Math.max(0, m.outputLines.length - outputRows));
@@ -230,10 +236,10 @@ export function renderLayout(m: TuiModel, cols: number, rows: number): TuiFrame 
     // 首行带 prompt，续行缩进 2（多行输入视觉延续）
     lines.push(truncateAnsi(i === 0 ? `${prompt}${seg}` : `  ${seg}`, cols));
   }
-  for (let i = 0; i < MENU_WINDOW; i++) {
-    lines.push(menuRow(m, i, cols)); // 菜单保留区
+  lines.push(sepLine(cols)); // 下分隔线（输入框底边：菜单在输入框下方，对齐 Pi/Codex 效果）
+  for (let i = 0; i < menuHeight; i++) {
+    lines.push(menuRow(m, i, cols)); // 菜单区（动态：仅菜单打开时显示，位于输入框下分隔线下方）
   }
-  lines.push(sepLine(cols)); // 下分隔线
   lines.push(truncateAnsi(m.status, cols)); // 状态行
 
   // 硬件光标：定位到输入光标所在行/列（运行状态行 + 上分隔线之后）
