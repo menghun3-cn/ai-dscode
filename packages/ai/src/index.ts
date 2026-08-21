@@ -15,4 +15,4 @@ export * from './anthropic.js';
 export * from './providers.js';
 export * from './models-store.js';
 
-export const AI_PACKAGE_VERSION = '1.0.0';
+export const AI_PACKAGE_VERSION = '1.1.0';

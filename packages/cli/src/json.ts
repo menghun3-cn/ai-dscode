@@ -24,7 +24,7 @@ export function serializeJsonEvent(ev: AgentEvent): { type: string; data: Record
     case 'tool_call':
       return { type: ev.type, data: { toolCallId: ev.toolCallId, toolName: ev.toolName, args: ev.args } };
     case 'tool_result':
-      return { type: ev.type, data: { toolName: ev.toolName, isError: ev.isError, output: ev.output } };
+      return { type: ev.type, data: { toolName: ev.toolName, isError: ev.isError, output: ev.output, metadata: ev.metadata } };
     case 'agent_settled':
       return { type: ev.type, data: { reason: ev.reason, usage: ev.usage } };
     case 'agent_start':

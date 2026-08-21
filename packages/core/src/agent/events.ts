@@ -11,5 +11,5 @@ export type AgentEvent =
   | { type: 'message_update'; content: string }
   | { type: 'reasoning_update'; content: string }
   | { type: 'tool_call'; toolCallId: string; toolName: string; args: string }
-  | { type: 'tool_result'; toolCallId: string; toolName: string; output: string; isError: boolean }
+  | { type: 'tool_result'; toolCallId: string; toolName: string; output: string; isError: boolean; metadata?: Record<string, unknown> }
   | { type: 'agent_settled'; reason: 'no-tool-calls' | 'max-turns' | 'aborted'; usage: StreamUsage };

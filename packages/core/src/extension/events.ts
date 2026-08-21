@@ -27,7 +27,7 @@ export interface ExtensionEventMap {
   turn_start: { turn: number };
   turn_end: { turn: number };
   tool_call: { toolCallId: string; toolName: string; args: string };
-  tool_result: { toolCallId: string; toolName: string; output: string; isError: boolean };
+  tool_result: { toolCallId: string; toolName: string; output: string; isError: boolean; metadata?: Record<string, unknown> };
   message_update: { content: string };
   model_select: { model: string };
   session_before_compact: { tokensBefore: number };

@@ -83,6 +83,12 @@
 - [x] [P0] [ALL] 安全审计 — key 存储、危险命令、项目信任，每 milestone 自检 → 验收：无 high 级漏洞（2026-08-09 通过，见 [todos-done.md](todos-done.md) §横切项验收记录）
 - [x] [P1] [ALL] 日志与可观测 — `DSCODE_DEBUG=1` 全链路日志，结构化 → 验收：NFR-4；**观测点=事件流**：DEBUG 日志与 M1 验收脚本统一消费事件总线（message_update/tool_call/agent_settled），不做独立 instrumentation 层（2026-08-09 落地：四模式事件流写 ~/.dscode/logs/ JSONL，见 [todos-done.md](todos-done.md) §横切项验收记录）
 - [x] [P1] [ALL] 错误体验 — 中文友好错误、可重试提示、不裸栈给用户 → 验收：制造 429/网络断 UI 不崩（2026-08-09 落地：friendlyError 可重试提示 + 顶层不裸栈，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] 编辑后 diff 快照 — edit/write 成功后展示"改前 vs 改后"的 -/+ unified diff（对账审计）→ 验收：diff 工具单测 + edit/write metadata 断言 + TUI 着色渲染（2026-08-20 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] TUI 任务清单 — agent 运行期在输入框上方显示任务清单与完成状态（tool_call/tool_result 实时归集 + plan 步骤底座）→ 验收：applyTaskEvent/taskRowsOf 单测 + renderLayout 任务区断言 + 菜单共存（2026-08-20 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] 输入框超长软换行 — 超长输入按可见宽度折行显示（不截断、不拆 CJK），光标锚定折行网格 → 验收：inputWrap/inputRowsOf/inputCursorToPos 单测 + renderLayout 折行断言（2026-08-21 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] 滚轮乱码修复 — SGR 鼠标字节（滚轮/点击）绝不漏进输入行，滚轮只滚动视口 → 验收：isSgrFragment 单测（分片/前缀剥离/非滚轮消费）（2026-08-21 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] 底部状态栏长目录截短 — CJK 长目录按可见宽度截短（非 .length），状态行预算分配不挤掉模型名/token → 验收：shortenPath CJK 单测 + statusBarText 行不超宽断言（2026-08-21 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
+- [x] [P2] [ALL] 底部目录完整显示 — 两行式底部：完整目录行（不截短）+ 状态行分离，FIXED_ROWS 5→6 高度联动 → 验收：renderLayout 完整目录行断言 + fixedRowsFor/FIXED_ROWS 联动断言 + 状态行不含目录（2026-08-21 落地，见 [todos-done.md](todos-done.md) §横切项验收记录）
 
 ---
 

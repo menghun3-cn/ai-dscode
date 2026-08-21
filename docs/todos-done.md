@@ -436,6 +436,42 @@
 - **证据**：errors.test 3 条（含"不泄露堆栈"断言）。
 - **对应**：todos P1 验收（制造 429/网络断 UI 不崩——错误被 catch 且提示友好，不崩）
 
+### 编辑后 diff 快照（P2，原理-file-tools.md §6 diff 对账落地）
+- **完成时间**：2026-08-20
+- **内容**：`core/src/util/diff.ts`——无依赖行级 unified diff（LCS 扁平 Int32Array DP + 掐头去尾快路径 + `LCS_LIMIT=1M` 有界回退防大文件爆内存；`@@` hunk 头 / 空格/-/+ 前缀行 / added-removed 统计）；`edit` 与 `write`（覆盖已存在文件）成功后计算"改前 vs 改后"快照：output 附 `（+N -M）` 统计，metadata 带 `diff` 文本与 `diffStats`；`AgentEvent.tool_result` / `ToolCallOutcome` / EventBus 负载携带 `metadata`，json/rpc 序列化器透传；TUI `tool_result` 成功结果着色展示（- 红 / + 绿 / @@ 青 / ---+++ 灰）。
+- **证据**：diff.test 7 条（含新文件 `@@ -0,0`、CRLF、相邻 hunk 合并、1500×1500 有界回退）；edit/write 工具测试补 metadata 断言；tui.test 补 renderDiffText/renderEventText 断言；`pnpm typecheck` 零错误 + `pnpm test` 47 文件 332 用例全绿。
+- **对应**：FR-3.2/FR-3.3、原理-file-tools.md §6/§9（diff 可审计：每次 patch 后必有 diff 快照）
+
+### TUI 任务清单（P2，输入框上方显示任务清单与完成情况）
+- **完成时间**：2026-08-20
+- **内容**：`cli/src/tui-render.ts`——`TaskItem`/`TaskStatus` 模型 + `TuiModel.tasks`；`applyTaskEvent` 纯函数从 agent 事件流归集（tool_call → running、tool_result → done/failed，plan 步骤由 tui.ts 以 pending 预置为底座）；`taskTitleOf` 提炼短标题（path/command/pattern 优先）；`taskRowsOf`/`MAX_TASK_ROWS=5`（超量显示最新 N 条 + "共 N 项"提示行）；`renderLayout` 任务区渲染在输入框上方（运行状态行之上），`fixedRowsFor`/`cursorRow`/`scrollOutput` 同步计入任务区高度；`cli/src/tui.ts` 交互循环事件驱动更新任务清单并重绘。
+- **证据**：tui-render.test 32 条（新增 taskTitleOf/taskRowsOf/applyTaskEvent/renderLayout 任务区 10 条，含状态着色、超量提示、菜单共存、无任务不占行）；`pnpm typecheck` 零错误；`pnpm test` 47 文件 341 用例（唯一失败为 packages/ai client 空闲超时 flaky 计时用例，单独跑 10/10 通过，与本次改动无关）。
+- **对应**：FR-2.1（interactive TUI）、原理-agentloop.md §8（事件流即观测点）
+
+### 输入框超长软换行（P2，修复超长输入被截断不换行）
+- **完成时间**：2026-08-21
+- **内容**：`cli/src/tui-render.ts`——`inputWrap` 折行工具（按可见宽度折行，首行扣除 prompt 宽、续行缩进 2，不拆 CJK/emoji）；`inputRowsOf`/`MAX_INPUT_HEIGHT` 高度有界；`inputCursorToPos` 折行网格感知（baseRow 累加前面逻辑行折行数，含 prompt 占位）；`inputPromptWidth`；`renderLayout` 输入段改为折行渲染 + 窗口锚定光标（超高时滚动显示尾部、光标始终可见），`fixedRowsFor`/`scrollOutput`/PgUp/PgDn 同步传入 COLS 与 prompt 宽。
+- **证据**：tui-render.test 46 条（新增 inputWrap/inputRowsOf/inputPromptWidth/inputCursorToPos/renderLayout 折行 14 条，含 CJK 折行、折行边界光标、多逻辑行 baseRow、超高窗口锚定）；`pnpm typecheck` 零错误；`pnpm test` 47 文件 355 用例（唯一失败为 packages/ai flaky 计时用例，单独跑 10/10 通过）。
+- **对应**：FR-2.1（interactive TUI 多行输入）
+
+### 滚轮乱码修复（P2，SGR 鼠标字节漏进输入行）
+- **完成时间**：2026-08-21
+- **内容**：`cli/src/tui-render.ts` 新增 `isSgrFragment`（SGR 鼠标序列/分片识别：前缀完整、前缀被剥完整形如 `64;9;35M`、前缀被剥部分形三字段 `64;9;35`、buf 非空续接）；`cli/src/tui.ts` 鼠标拦截提前到 key 判定之前——滚轮/点击字节一律消费不落输入行（原实现 sgrShaped 只认 `\x1b[<` 开头或 `^[\d;]+[Mm]$`，分片或 key=undefined 时落入 origTtyWrite 产生乱码），非滚轮事件也消费不滚动。
+- **证据**：tui-render.test 46 条（新增 isSgrFragment 6 条：分片到达、前缀剥离、非滚轮点击消费、纯数字/两字段不误判）；`pnpm typecheck` 零错误；`pnpm test` 47 文件 355 用例（唯一失败为 packages/ai flaky 计时用例，单独跑 10/10 通过）。
+- **对应**：FR-2.1（interactive TUI 鼠标滚轮回看）
+
+### 底部状态栏长目录截短修复（P2，CJK 长目录按可见宽度截短 + 预算分配）
+- **完成时间**：2026-08-21
+- **内容**：`cli/src/tui.ts`——`shortenPath` 改用**可见宽度**（visibleLen，CJK/emoji 计 2 列）判定与截短（保留末尾 + 省略号），根治"34 个中文字符按 .length 判定原样返回、实际渲染宽 68 列导致状态行被截断"；`statusBarText` 与 `setStatus` 改为**预算分配**——先量固定段（⏳/[plan]/「name」/↑↓/R CH/ctx）与右侧模型名占用，剩余宽度全给目录（`Math.max(4, …)`），模型名/token 统计不再被长目录挤掉，整行不超 COLS 不触发渲染层硬截断。
+- **证据**：tui.test 25 条（新增 4 条：CJK 可见宽度截短不拆字、全角路径超 34 截短、预算分配后模型名/统计保留 + 行不超宽、`visibleLen(t) ≤ cols`）；`pnpm typecheck` 零错误；`pnpm test` 47 文件 358 用例全绿（首次 1 失败为 packages/ai flaky 计时用例，重跑通过）。
+- **对应**：FR-2.1（interactive TUI 状态行）
+
+### 底部目录完整显示（P2，两行式底部：完整目录行 + 状态行分离）
+- **完成时间**：2026-08-21
+- **内容**：需求变更"目录要求显示全"——放弃截短方案，改两行式底部：`TuiModel` 新增 `cwd`（完整路径，不截短）；`renderLayout` 在菜单区后、状态行上方渲染完整目录行（超宽仅由 truncateAnsi 兜底截断，不挤压其他行）；`setStatus` 拆分——`model.cwd = session.cwd` 完整路径，状态行只保留 ⏳/[plan]/「name」/↑↓/R CH/ctx + 右 model（不再含目录）；`statusBarText` 同步移除 cwd 段（目录走独立行）；`fixedRowsFor`/`FIXED_ROWS`/`renderLayout` 高度联动 +1（FIXED_ROWS 5→6），scrollOutput/PgUp/PgDn 自动跟随。
+- **证据**：tui-render.test + tui.test 73 条（新增/更新：帧结构含完整目录行、cwd 完整原样显示、超宽兜底截断不挤压状态行、输出滚动/回看锚定/跟随模式偏移随 FIXED_ROWS 更新、statusBarText 状态行不含目录无省略号）；`pnpm typecheck` 零错误；`pnpm test` 47 文件 360 用例全绿。
+- **对应**：FR-2.1（interactive TUI 状态行/目录展示）
+
 ---
 
 ## 经验沉淀

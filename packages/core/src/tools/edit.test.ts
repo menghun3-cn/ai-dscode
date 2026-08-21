@@ -30,6 +30,15 @@ describe('edit 工具（SC-1.5）', () => {
     expect(await fs.readFile(path.join(tmp, 'c.txt'), 'utf8')).toBe('baz bar');
   });
 
+  it('成功后 metadata 携带 diff 快照与统计（原理-file-tools.md §6）', async () => {
+    await write('foo bar');
+    const r = await editTool.execute('1', { path: 'c.txt', edits: [{ oldText: 'foo', newText: 'baz' }] }, ctx);
+    expect(r.metadata?.diff).toContain('-foo bar');
+    expect(r.metadata?.diff).toContain('+baz bar');
+    expect(r.metadata?.diffStats).toEqual({ added: 1, removed: 1 });
+    expect(r.output).toContain('（+1 -1）');
+  });
+
   it('一次多 disjoint edit', async () => {
     await write('aaa bbb ccc');
     const r = await editTool.execute('1', { path: 'c.txt', edits: [{ oldText: 'aaa', newText: '1' }, { oldText: 'ccc', newText: '3' }] }, ctx);

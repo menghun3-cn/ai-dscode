@@ -10,6 +10,7 @@ import path from 'node:path';
 import { Type, type Static } from '@sinclair/typebox';
 import type { Tool } from '../tool.js';
 import { tryResolve } from '../util/path.js';
+import { unifiedDiff } from '../util/diff.js';
 
 export const writeParams = Type.Object({
   path: Type.String({ description: '目标文件路径（相对 cwd 或绝对路径）' }),
@@ -29,12 +30,17 @@ export const writeTool: Tool<WriteParams> = {
       return { output: resolved.error, isError: true };
     }
     const filePath = resolved.path;
+    // 覆盖前快照：已存在文件才需要 diff 对账（原理-file-tools.md §6）
+    const before = await fs.readFile(filePath, 'utf8').catch(() => null);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, params.content, 'utf8');
     const bytes = Buffer.byteLength(params.content, 'utf8');
+    const isNew = before === null;
+    const diff = isNew ? { text: '', stats: { added: 0, removed: 0 } } : unifiedDiff(before!, params.content, { label: params.path });
+    const statText = isNew ? '（新建）' : diff.stats.added + diff.stats.removed > 0 ? `（+${diff.stats.added} -${diff.stats.removed}）` : '';
     return {
-      output: `已写入 ${params.path}（${bytes} 字节）`,
-      metadata: { bytes, path: filePath },
+      output: `已写入 ${params.path}（${bytes} 字节）${statText}`,
+      metadata: { bytes, path: filePath, isNew, diff: diff.text, diffStats: diff.stats },
     };
   },
 };

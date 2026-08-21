@@ -9,6 +9,7 @@ import { promises as fs } from 'node:fs';
 import { Type, type Static } from '@sinclair/typebox';
 import type { Tool } from '../tool.js';
 import { resolveWithin } from '../util/path.js';
+import { unifiedDiff } from '../util/diff.js';
 
 export const editParams = Type.Object({
   path: Type.String({ description: '目标文件路径（相对 cwd 或绝对路径）' }),
@@ -72,9 +73,12 @@ export const editTool: Tool<EditParams> = {
     }
     await fs.writeFile(filePath, result, 'utf8');
 
+    // 改前 vs 改后 diff（原理-file-tools.md §6：每次 patch 后必有 diff 快照，可对账）
+    const diff = unifiedDiff(content, result, { label: params.path });
+    const statText = diff.stats.added + diff.stats.removed > 0 ? `（+${diff.stats.added} -${diff.stats.removed}）` : '';
     return {
-      output: `已应用 ${spans.length} 个编辑到 ${params.path}`,
-      metadata: { edits: spans.length, path: filePath },
+      output: `已应用 ${spans.length} 个编辑到 ${params.path}${statText}`,
+      metadata: { edits: spans.length, path: filePath, diff: diff.text, diffStats: diff.stats },
     };
   },
 };

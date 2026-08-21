@@ -34,6 +34,20 @@ describe('write 工具（SC-1.4）', () => {
     expect(await fs.readFile(path.join(tmp, 'ov.txt'), 'utf8')).toBe('new');
   });
 
+  it('覆盖时 metadata 携带 diff 快照与统计；新建时 isNew', async () => {
+    await fs.writeFile(path.join(tmp, 'ov.txt'), 'old', 'utf8');
+    const r = await writeTool.execute('1', { path: 'ov.txt', content: 'new' }, ctx);
+    expect(r.metadata?.isNew).toBe(false);
+    expect(r.metadata?.diff).toContain('-old');
+    expect(r.metadata?.diff).toContain('+new');
+    expect(r.metadata?.diffStats).toEqual({ added: 1, removed: 1 });
+
+    const fresh = await writeTool.execute('1', { path: 'fresh.txt', content: 'x' }, ctx);
+    expect(fresh.metadata?.isNew).toBe(true);
+    expect(fresh.metadata?.diff).toBe('');
+    expect(fresh.output).toContain('（新建）');
+  });
+
   it('路径逃逸被拒绝', async () => {
     const r = await writeTool.execute('1', { path: '../evil.txt', content: 'x' }, ctx);
     expect(r.isError).toBe(true);

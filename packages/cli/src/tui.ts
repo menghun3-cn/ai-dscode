@@ -15,7 +15,7 @@ import { expandInput } from './expand.js';
 import { friendlyError } from './errors.js';
 import { DSCCODE_VERSION } from './args.js';
 import { PROVIDERS, setTuiConfirmHook } from './build-session.js';
-import { renderLayout, visibleLen, fixedRowsFor, menuHeightOf, parseSgrMouse, welcomeBox, type TuiModel } from './tui-render.js';
+import { renderLayout, visibleLen, fixedRowsFor, menuHeightOf, parseSgrMouse, isSgrFragment, welcomeBox, applyTaskEvent, taskRowsOf, inputPromptWidth, type TuiModel } from './tui-render.js';
 import { updateMenuForLine, menuStep, menuClose, menuPick } from './tui-controller.js';
 
 export interface UsageStats {
@@ -91,6 +91,20 @@ export function renderStreamingText(text: string): string {
   return out;
 }
 
+/** 把 unified diff 文本着色为 TUI 行（- 红 / + 绿 / @@ 青 / ---+++ 灰），行首保留原始前缀 */
+export function renderDiffText(diff: string): string {
+  return diff
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('@@')) return `\x1b[36m${line}\x1b[0m`;
+      if (line.startsWith('---') || line.startsWith('+++')) return `\x1b[90m${line}\x1b[0m`;
+      if (line.startsWith('-')) return `\x1b[31m${line}\x1b[0m`;
+      if (line.startsWith('+')) return `\x1b[32m${line}\x1b[0m`;
+      return line;
+    })
+    .join('\n');
+}
+
 /** 渲染一个 agent 事件为文本串 */
 export function renderEventText(ev: AgentEvent): string {
   switch (ev.type) {
@@ -114,6 +128,10 @@ export function renderEventText(ev: AgentEvent): string {
       }
     case 'tool_result':
       if (ev.isError) return `\x1b[31m✗ ${ev.output}\x1b[0m\n`;
+      // 成功结果：edit/write 带 diff 快照（metadata.diff）时着色展示（原理-file-tools.md §6）
+      if (typeof ev.metadata?.diff === 'string' && ev.metadata.diff.length > 0) {
+        return `\n${renderDiffText(ev.metadata.diff)}\n`;
+      }
       return '';
     default:
       return '';
@@ -176,10 +194,23 @@ export function statusText(opts: {
   return parts.join(' · ');
 }
 
-/** 路径截短：过长时保留末尾（状态行用） */
+/**
+ * 路径截短：按可见宽度（CJK/emoji 计 2 列）过长时保留末尾 + 省略号（状态行用）。
+ * 用可见宽度而非字符串 .length：34 个中文字符的路径按 .length 判定会原样返回，实际渲染宽 68 列导致状态行被截断。
+ */
 export function shortenPath(cwd: string, maxLen = 34): string {
-  if (cwd.length <= maxLen) return cwd;
-  return `…${cwd.slice(-(maxLen - 1))}`;
+  if (visibleLen(cwd) <= maxLen) return cwd;
+  const budget = Math.max(1, maxLen - 1); // 省略号占 1 列
+  let tail = '';
+  let w = 0;
+  for (let i = [...cwd].length - 1; i >= 0; i--) {
+    const ch = [...cwd][i]!;
+    const cw = visibleLen(ch); // 单字符可见宽（CJK=2，emoji=2，不拆代理对）
+    if (w + cw > budget) break;
+    w += cw;
+    tail = ch + tail;
+  }
+  return `…${tail}`;
 }
 
 /** 上下文进度条 + 已用/剩余（ASCII 兼容字符 + 按占比着色） */
@@ -193,10 +224,11 @@ export function contextBar(usedTokens: number, contextWindow: number): string {
   return `${color}${bar} ${fmtTokens(usedTokens)}/${fmtTokens(contextWindow)} (${pct}% · 剩 ${fmtTokens(remaining)})\x1b[0m`;
 }
 
-/** 增强状态行（分色） */
+/** 增强状态行（分色）：只含 ⏳/[plan]/「name」/↑↓/R CH/ctx + 右 model；目录走底部独立完整行（见 TuiModel.cwd） */
 export function statusBarText(opts: {
   model: string;
-  cwd: string;
+  /** 兼容旧调用保留；目录不再显示在状态行（底部独立行完整展示） */
+  cwd?: string;
   usedTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
@@ -213,7 +245,6 @@ export function statusBarText(opts: {
     opts.busy ? '\x1b[33m⏳\x1b[0m' : '',
     opts.planActive ? '\x1b[33m[plan]\x1b[0m' : '',
     opts.name ? `\x1b[35m「${opts.name}」\x1b[0m` : '',
-    `\x1b[90m${shortenPath(opts.cwd)}\x1b[0m`,
     `↑${fmtTokens(opts.usedTokens)} ↓${fmtTokens(opts.completionTokens)}`,
     `R${opts.requests} CH${fmtTokens(opts.cacheReadTokens)}`,
     `\x1b[36m${fmtTokens(used)}/${fmtTokens(opts.contextWindow)} (${pct}%)\x1b[0m`,
@@ -271,7 +302,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
   const COLS = ttyCols();
 
   // ---- 模型 + readline（输出到空 sink：readline 只做输入编辑，渲染完全由本层拥有） ----
-  const model: TuiModel = { outputLines: [], outputAnchor: null, input: '', inputCursor: 0, menu: null, status: '', runStatus: '', busy: false };
+  const model: TuiModel = { outputLines: [], outputAnchor: null, input: '', inputCursor: 0, menu: null, status: '', runStatus: '', cwd: session.cwd, busy: false };
   const nullOut = new Writable({
     write(_chunk: unknown, _enc: unknown, cb: () => void): void {
       cb();
@@ -312,16 +343,17 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     const used = usage.promptTokens + usage.completionTokens;
     const window = contextWindowOf(modelId);
     const pct = window > 0 ? Math.min(100, Math.round((used / window) * 100)) : 0;
+    // 完整工作目录走底部专用一行（model.cwd，不截短）；状态行只保留其余信息
+    model.cwd = session.cwd;
+    const right = `\x1b[32m${modelId}\x1b[0m`;
     const leftParts = [
       running ? '\x1b[33m⏳\x1b[0m' : '',
       session.plan.isActive ? '\x1b[33m[plan]\x1b[0m' : '',
       session.name ? `\x1b[35m「${session.name}」\x1b[0m` : '',
-      `\x1b[90m${shortenPath(session.cwd)}\x1b[0m`,
       `↑${fmtTokens(usage.promptTokens)} ↓${fmtTokens(usage.completionTokens)}`,
       `R${usage.requests} CH${fmtTokens(usage.cacheReadTokens)}`,
       `\x1b[36m${fmtTokens(used)}/${fmtTokens(window)} (${pct}%)\x1b[0m`,
     ].filter(Boolean).join(' ');
-    const right = `\x1b[32m${modelId}\x1b[0m`;
     const pad = Math.max(1, COLS - visibleLen(leftParts) - visibleLen(right) - 1);
     model.status = `${leftParts}${' '.repeat(pad)}${right}`;
   };
@@ -368,7 +400,7 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   /** 输出视口滚动（锚定语义，对齐 pi 的 sticky-footer 视口）：+ = 回看（视口锚定上移，流式追加不推走历史），- = 返回底部（到达即恢复跟随） */
   const scrollOutput = (delta: number): void => {
-    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input, menuHeightOf(model))); // 动态固定区（含菜单弹出高度）
+    const outputRows = Math.max(1, ROWS - fixedRowsFor(model.input, menuHeightOf(model), taskRowsOf(model.tasks), COLS, inputPromptWidth(model.busy))); // 动态固定区（含菜单/任务/输入折行高度）
     const maxStart = Math.max(0, model.outputLines.length - outputRows);
     const current = model.outputAnchor === null || model.outputAnchor === undefined ? maxStart : Math.min(model.outputAnchor, maxStart);
     if (delta > 0) {
@@ -548,19 +580,13 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
 
   // ---- 键盘拦截（readline _ttyWrite）：菜单/快捷键 → 更新模型 → render ----
   const origTtyWrite = rlAny._ttyWrite.bind(rl);
-  // SGR 鼠标序列缓冲（\x1b[<b;x;yM，可能分片到达）
+  // SGR 鼠标序列缓冲（\x1b[<b;x;yM，可能分片到达 / Bun 剥前缀后按数字形传入）
   let mouseBuf = '';
   rlAny._ttyWrite = (s: string | undefined, key: Key | undefined) => {
-    // readline（Bun 实现）部分路径会传 undefined（鼠标序列分片/特殊按键）：防御，杜绝崩溃
     const sStr = typeof s === 'string' ? s : '';
-    if (key === undefined || key === null) {
-      origTtyWrite(sStr, key as never); // 非按键事件：交还原版处理
-      return;
-    }
-    // SGR 鼠标事件：滚轮上/下（按钮 64/65）→ 调整输出回看（不传给 readline；物理 ↑↓ 留给历史输入）
-    // 注意：Bun 的 readline 会剥掉 \x1b[< 前缀再传（如 "0;9;35M"）——按 SGR 数字形状匹配，补回前缀解析，杜绝垃圾入输入行
-    const sgrShaped = sStr.startsWith('\x1b[<') || /^[\d;]+[Mm]$/.test(sStr);
-    if (sgrShaped || mouseBuf) {
+    // SGR 鼠标事件必须先于 key 判定拦截：滚轮/点击字节绝不允许落入输入行（分片/前缀剥离/非滚轮事件都消费掉）
+    // 注意：Bun 的 readline 会剥掉 \x1b[< 前缀再传（如 "64;9;35M"），甚至 key 为 undefined——按 SGR 数字形状匹配补回前缀
+    if (isSgrFragment(sStr, mouseBuf) || mouseBuf) {
       mouseBuf += sStr;
       const norm = mouseBuf.startsWith('\x1b[<') ? mouseBuf : `\x1b[<${mouseBuf}`; // 前缀被剥时补回
       const ev = parseSgrMouse(norm);
@@ -569,10 +595,15 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
         if (ev.button === 64 || ev.button === 65) {
           scrollOutput(ev.button === 64 ? 3 : -3); // 滚轮上回看 3 行 / 滚轮下返回 3 行
         }
+        // 非滚轮鼠标事件（点击等）也消费掉：不滚动、不落输入行
         return;
       }
       if (mouseBuf.length > 40) mouseBuf = ''; // 非鼠标序列，丢弃缓冲
       return; // 部分序列等待更多字节
+    }
+    if (key === undefined || key === null) {
+      origTtyWrite(sStr, key as never); // 非按键事件：交还原版处理
+      return;
     }
     if (key.ctrl && key.name === 'r') {
       const candidates = history.slice(-15).reverse();
@@ -592,11 +623,11 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       return;
     }
     if (key.name === 'pageup') {
-      scrollOutput(ROWS - fixedRowsFor(model.input, menuHeightOf(model))); // 回看一屏
+      scrollOutput(ROWS - fixedRowsFor(model.input, menuHeightOf(model), taskRowsOf(model.tasks), COLS, inputPromptWidth(model.busy))); // 回看一屏
       return;
     }
     if (key.name === 'pagedown') {
-      scrollOutput(-(ROWS - fixedRowsFor(model.input, menuHeightOf(model)))); // 返回一屏
+      scrollOutput(-(ROWS - fixedRowsFor(model.input, menuHeightOf(model), taskRowsOf(model.tasks), COLS, inputPromptWidth(model.busy)))); // 返回一屏
       return;
     }
     if (key.name === 'return' && key.shift) {
@@ -684,6 +715,8 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
     appendLine(`\x1b[36m> ${input}\x1b[0m`);
     usage.requests++;
     running = true;
+    // 新任务开始：任务清单以 plan 步骤（如有）为待办底座，tool_call/tool_result 实时归集到输入框上方展示
+    model.tasks = session.plan.getSteps().map((s) => ({ id: s.id, title: s.title, status: 'pending' as const }));
     const turnStart = Date.now();
     // 输入框上方固定实时运行状态行：耗时每秒跳动 + token 实时累计
     model.runStatus = runningStatusText(0);
@@ -697,6 +730,12 @@ export async function runInteractive(session: AgentSession, extManager?: Extensi
       const expanded = await expandInput(input, session.cwd);
       for await (const ev of session.run(expanded)) {
         logger?.log(ev);
+        // 任务清单实时归集（tool_call → running，tool_result → done/failed），输入框上方展示
+        const nextTasks = applyTaskEvent(model.tasks ?? [], ev);
+        if (nextTasks !== model.tasks) {
+          model.tasks = nextTasks;
+          render();
+        }
         if (ev.type === 'message_update') {
           const sep = reasoningShown || reasoningStreamed ? '\n' : '';
           reasoningShown = false;

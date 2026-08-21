@@ -60,6 +60,8 @@ export interface ToolCallOutcome {
   toolName: string;
   output: string;
   isError: boolean;
+  /** 结构化元数据（渲染用，如 edit/write 的 diff 快照） */
+  metadata?: Record<string, unknown>;
 }
 
 export class AgentSession {
@@ -418,7 +420,7 @@ export class AgentSession {
       }
       // 并行执行（错误隔离：单工具失败不连坐）；被 block 的工具直接产出 isError 结果
       const outcomes = await Promise.all(
-        toolCalls.map((tc) => {
+        toolCalls.map((tc): Promise<ToolCallOutcome> => {
           const b = blocked.find((x) => x.tc.id === tc.id);
           return b
             ? Promise.resolve({ toolCallId: tc.id, toolName: tc.function.name, output: `[blocked] ${b.reason}`, isError: true })
@@ -428,7 +430,7 @@ export class AgentSession {
       for (const o of outcomes) {
         this.messages.push({ role: 'tool', tool_call_id: o.toolCallId, content: o.output });
         this.pushEntry('toolResult', { role: 'tool', content: o.output, toolCallId: o.toolCallId });
-        await this.bus.emit('tool_result', { toolCallId: o.toolCallId, toolName: o.toolName, output: o.output, isError: o.isError });
+        await this.bus.emit('tool_result', { toolCallId: o.toolCallId, toolName: o.toolName, output: o.output, isError: o.isError, metadata: o.metadata });
         yield { type: 'tool_result', ...o };
       }
       await this.bus.emit('turn_end', { turn });
@@ -514,7 +516,7 @@ export class AgentSession {
         // M5：sub-agent 工厂——隔离 AgentSession 执行（SC-4.5）
         subAgent: (prompt) => this.runSubAgent(prompt),
       });
-      return { toolCallId, toolName, output: result.output, isError: !!result.isError };
+      return { toolCallId, toolName, output: result.output, isError: !!result.isError, metadata: result.metadata };
     } catch (err) {
       return {
         toolCallId,

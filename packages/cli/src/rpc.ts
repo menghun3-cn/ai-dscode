@@ -107,7 +107,7 @@ function summarizeEvent(ev: AgentEvent): Record<string, unknown> {
     case 'tool_call':
       return { toolName: ev.toolName, args: ev.args };
     case 'tool_result':
-      return { toolName: ev.toolName, isError: ev.isError, output: ev.output };
+      return { toolName: ev.toolName, isError: ev.isError, output: ev.output, metadata: ev.metadata };
     case 'agent_settled':
       return { reason: ev.reason, usage: ev.usage };
     default:

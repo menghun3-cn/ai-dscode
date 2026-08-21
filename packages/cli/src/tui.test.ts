@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { visibleLen } from './tui-render.js';
 import {
   costText,
   fmtTokens,
@@ -9,6 +10,8 @@ import {
   shortenPath,
   titleBarText,
   renderStreamingText,
+  renderDiffText,
+  renderEventText,
   resetCodeFence,
   shouldMergePaste,
   type UsageStats,
@@ -126,6 +129,43 @@ describe('分区信息区（A+B：contextBar / statusBarText / shortenPath）', 
     expect(shortenPath('/short', 10)).toBe('/short'); // 不超长原样
   });
 
+  it('shortenPath CJK 长目录：按可见宽度截短（非 .length），不拆字', () => {
+    const s = shortenPath('一二三四五六七八九十', 8);
+    expect(s.startsWith('…')).toBe(true);
+    expect(s).toContain('十'); // 保留末尾
+    expect(visibleLen(s)).toBeLessThanOrEqual(8); // 可见宽度 ≤ maxLen（CJK 计 2 列）
+  });
+
+  it('shortenPath 全角路径超 34 时截短（修复：原 .length 判定导致 34 个中文字符原样返回、状态行被截断）', () => {
+    const wide = '很长的项目目录'.repeat(6); // 30 字符，可见宽 60
+    const s = shortenPath(wide); // 默认 maxLen 34
+    expect(s).not.toBe(wide); // 不再原样返回
+    expect(visibleLen(s)).toBeLessThanOrEqual(34);
+  });
+
+  it('statusBarText 状态行不含目录（目录走底部独立完整行，TuiModel.cwd）', () => {
+    const longCjk = '很长的项目目录'.repeat(10); // 可见宽 70
+    const t = statusBarText({
+      model: 'deepseek-v4-flash',
+      cwd: longCjk,
+      usedTokens: 1000,
+      completionTokens: 500,
+      cacheReadTokens: 128,
+      requests: 3,
+      contextWindow: 10000,
+      cols: 80,
+      name: '重构',
+      planActive: true,
+      busy: true,
+    });
+    expect(t).toContain('deepseek-v4-flash'); // 右侧模型名完整保留
+    expect(t).toContain('「重构」');
+    expect(t).toContain('1.5K/10K (15%)'); // token 统计不被挤掉
+    expect(t).not.toContain(longCjk); // 状态行不含目录
+    expect(t).not.toContain('…'); // 无截短省略号（目录不显示在状态行）
+    expect(visibleLen(t)).toBeLessThanOrEqual(80); // 整行不超宽
+  });
+
   it('statusBarText 参考样式：左 cwd+usage 右 model 两端对齐', () => {
     const longCwd = '/very/long/path/to/my/project/with/a/very/long/name';
     const t = statusBarText({
@@ -180,5 +220,33 @@ describe('statusText（底部状态栏）', () => {
   it('contextWindow 为 0 时占比为 0 不除零', () => {
     const t = statusText({ model: 'm', cwd: '/', usedTokens: 100, contextWindow: 0 });
     expect(t).toContain('(0%)');
+  });
+});
+
+describe('renderDiffText / renderEventText（edit/write 后 diff 着色展示，原理-file-tools.md §6）', () => {
+  it('renderDiffText：- 红 + 绿 @@ 青 ---/+++ 灰，前缀行原样保留', () => {
+    const out = renderDiffText('--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-foo\n+bar\n baz');
+    expect(out).toContain('\x1b[90m--- a/c.txt\x1b[0m');
+    expect(out).toContain('\x1b[90m+++ b/c.txt\x1b[0m');
+    expect(out).toContain('\x1b[36m@@ -1 +1 @@\x1b[0m');
+    expect(out).toContain('\x1b[31m-foo\x1b[0m');
+    expect(out).toContain('\x1b[32m+bar\x1b[0m');
+    expect(out).toContain(' baz'); // 上下文行不着色
+  });
+
+  it('renderEventText：成功 edit 结果带 metadata.diff 时输出着色 diff；无 diff 时不输出', () => {
+    const withDiff = renderEventText({
+      type: 'tool_result',
+      toolCallId: 'c1',
+      toolName: 'edit',
+      output: '已应用 1 个编辑到 c.txt（+1 -1）',
+      isError: false,
+      metadata: { diff: '--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-foo\n+bar', diffStats: { added: 1, removed: 1 } },
+    });
+    expect(withDiff).toContain('\x1b[31m-foo\x1b[0m');
+    expect(withDiff).toContain('\x1b[32m+bar\x1b[0m');
+
+    const plain = renderEventText({ type: 'tool_result', toolCallId: 'c2', toolName: 'read', output: 'ok', isError: false });
+    expect(plain).toBe('');
   });
 });
